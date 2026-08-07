@@ -1,0 +1,92 @@
+name: macOS / Metal Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build TACTIX on macOS
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify source is present
+        id: source
+        shell: bash
+        run: |
+          if [[ -f TACTIX.csproj ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "TACTIX.csproj is not in the repository yet; skipping build during repository bootstrap."
+          fi
+
+      - name: Setup .NET 9
+        if: steps.source.outputs.present == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Select Xcode
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun -f metal
+          xcrun -f metallib
+
+      - name: Restore macOS workload
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          dotnet --info
+          dotnet workload restore TACTIX.csproj
+
+      - name: Restore
+        if: steps.source.outputs.present == 'true'
+        run: dotnet restore TACTIX.csproj -r osx-arm64
+
+      - name: Compile Metal shader
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          mkdir -p artifacts/metal
+          xcrun -sdk macosx metal -c Shaders/Triangle.metal -o artifacts/metal/Triangle.air
+          xcrun -sdk macosx metallib artifacts/metal/Triangle.air -o artifacts/metal/default.metallib
+
+      - name: Build TACTIX
+        if: steps.source.outputs.present == 'true'
+        run: dotnet build TACTIX.csproj -c Debug -f net9.0-macos15.0 -r osx-arm64 --no-restore
+
+      - name: Publish TACTIX.app
+        if: steps.source.outputs.present == 'true'
+        run: dotnet publish TACTIX.csproj -c Release -f net9.0-macos15.0 -r osx-arm64 --no-restore -p:CreatePackage=false
+
+      - name: Locate app bundle
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          APP_PATH="$(find bin/Release -type d -name 'TACTIX.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "TACTIX.app was not produced."
+            exit 1
+          fi
+          echo "Built app: $APP_PATH"
+
+      - name: Upload build logs and Metal output
+        if: always() && steps.source.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactix-macos-build-artifacts
+          path: |
+            artifacts/
+            bin/Release/**/TACTIX.app
+          if-no-files-found: warn
