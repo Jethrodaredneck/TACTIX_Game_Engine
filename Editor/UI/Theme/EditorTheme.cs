@@ -23,7 +23,10 @@ public static class EditorTheme
         view.Layer!.BackgroundColor = (color ?? Panel).CGColor;
     }
 
-    public static NSTextField Label(string text, nfloat size = 12, bool muted = false, bool bold = false)
+    public static NSTextField Label(string text, bool muted = false, bool bold = false)
+        => Label(text, (nfloat)12, muted, bold);
+
+    public static NSTextField Label(string text, nfloat size, bool muted = false, bool bold = false)
     {
         return new NSTextField
         {
