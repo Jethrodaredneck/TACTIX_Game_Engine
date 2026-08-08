@@ -441,7 +441,10 @@ public sealed class MetalRenderer : IDisposable
         var cmd=_queue.CommandBuffer();
         var enc=cmd.CreateRenderCommandEncoder(pass);
         enc.SetRenderPipelineState(_pipeline); enc.SetDepthStencilState(_depthState);
-        enc.SetCullMode(MTLCullMode.Back); enc.SetFrontFacingWinding(MTLWinding.Clockwise);
+        // The editor camera basis mirrors clip-space handedness relative to our object-space winding.
+        // Treat counter-clockwise clip-space triangles as the exterior/front faces so back-face
+        // culling removes interior surfaces instead of making closed meshes look hollow.
+        enc.SetCullMode(MTLCullMode.Back); enc.SetFrontFacingWinding(MTLWinding.CounterClockwise);
         enc.SetFragmentTexture(_logoTexture,0); enc.SetFragmentSamplerState(_sampler,0);
         enc.SetViewport(new MTLViewport{OriginX=0,OriginY=0,Width=tex.Width,Height=tex.Height,ZNear=0,ZFar=1});
 
