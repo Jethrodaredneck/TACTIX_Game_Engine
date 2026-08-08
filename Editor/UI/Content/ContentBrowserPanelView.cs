@@ -50,8 +50,8 @@ public sealed class ContentBrowserPanelView : NSView
     public override void Layout()
     {
         base.Layout();
-        const nfloat margin = 10;
-        const nfloat header = 34;
+        nfloat margin = (nfloat)10;
+        nfloat header = (nfloat)34;
         var w = Bounds.Width;
         var h = Bounds.Height;
         _path.Frame = new CGRect(margin, h - 28, Math.Max(80, w * 0.5 - margin), 20);
