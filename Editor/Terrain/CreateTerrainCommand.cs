@@ -1,4 +1,3 @@
-using System.Numerics;
 using TACTIX.Editor.Scene;
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Formats;
@@ -9,28 +8,25 @@ namespace TACTIX.Editor.Terrain;
 /// <summary>
 /// Creates both the project-owned TerrainAsset and the scene entity that references it.
 /// Undo removes the entity and the asset file; redo recreates both with the same identities.
-///
-/// Until the dedicated heightfield Metal buffer path lands, the entity also carries a
-/// Plane MeshRendererComponent scaled to the TerrainAsset footprint. This is deliberately
-/// a temporary render bridge: terrain identity/data remains owned by TerrainComponent +
-/// TerrainAsset, so the preview renderer can be removed without changing scene semantics.
+/// The renderer consumes TerrainComponent directly and generates the heightfield mesh from
+/// TerrainAsset, so terrain no longer carries a temporary plane MeshRendererComponent.
 /// </summary>
 public sealed class CreateTerrainCommand : IEditorCommand
 {
     private readonly World _world;
     private readonly EditorSelection _selection;
-    private readonly string _projectRoot;
+    private readonly AssetDatabase _assets;
     private readonly string _name;
 
     private int _entityId;
     private string _assetProjectPath = "";
     private TerrainAsset _terrain;
 
-    public CreateTerrainCommand(World world, EditorSelection selection, string projectRoot, string name = "Terrain")
+    public CreateTerrainCommand(World world, EditorSelection selection, AssetDatabase assets, string name = "Terrain")
     {
         _world = world;
         _selection = selection;
-        _projectRoot = projectRoot;
+        _assets = assets;
         _name = name;
     }
 
@@ -45,21 +41,12 @@ public sealed class CreateTerrainCommand : IEditorCommand
         if (string.IsNullOrEmpty(_assetProjectPath))
             _assetProjectPath = $"Assets/Terrain/{_name}_{_entityId}.tasset";
 
-        var database = new AssetDatabase(_projectRoot);
-        database.Initialize();
-        var meta = database.SaveTerrain(_assetProjectPath, _terrain, _name);
+        var meta = _assets.SaveTerrain(_assetProjectPath, _terrain, _name);
         _terrain = _terrain with { Guid = meta.Guid };
 
         _world.Add(entity, new NameComponent(_name));
-
-        var transform = TransformComponent.Identity;
-        // BuiltInMesh.Plane spans -1..1, so half-extents map the preview surface
-        // exactly to the TerrainAsset physical footprint.
-        transform.Scale = new Vector3(_terrain.SizeX * 0.5f, 1f, _terrain.SizeZ * 0.5f);
-        _world.Add(entity, transform);
-
+        _world.Add(entity, TransformComponent.Identity);
         _world.Add(entity, new TerrainComponent(meta.Guid));
-        _world.Add(entity, new MeshRendererComponent(BuiltInMesh.Plane, "TACTIX_TerrainPreview"));
         _selection.Select(entity);
     }
 
@@ -72,10 +59,10 @@ public sealed class CreateTerrainCommand : IEditorCommand
 
         if (!string.IsNullOrEmpty(_assetProjectPath))
         {
-            var database = new AssetDatabase(_projectRoot);
-            var fullPath = database.ResolveProjectPath(_assetProjectPath);
+            var fullPath = _assets.ResolveProjectPath(_assetProjectPath);
             if (File.Exists(fullPath))
                 File.Delete(fullPath);
+            _assets.Registry.Remove(_terrain.Guid);
         }
     }
 }
