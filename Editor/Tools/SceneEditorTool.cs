@@ -11,13 +11,10 @@ using TactixScene = TACTIX.Engine.Runtime.Scene.Scene;
 using TACTIX.Editor.Scene;
 using TACTIX.Editor.UI.Hierarchy;
 using TACTIX.Editor.UI.Inspector;
+using TACTIX.Engine.Assets.Database;
 
 namespace TACTIX.Editor.Tools;
 
-/// <summary>
-/// Main scene-editing tool. Its layout is declarative and independent from the
-/// DockHostView so later tools can provide their own arrangements.
-/// </summary>
 public sealed class SceneEditorTool : EditorTool
 {
     private readonly IMTLDevice _device;
@@ -25,23 +22,26 @@ public sealed class SceneEditorTool : EditorTool
     private readonly TactixScene _scene;
     private readonly EditorSelection _selection;
     private readonly EditorCommandStack _commands;
-    private readonly string _projectRoot;
+    private readonly AssetDatabase _assets;
 
     public override string ToolId => "SceneEditor";
     public ViewportPanelView Viewport { get; }
 
-    public SceneEditorTool(IMTLDevice device, AIBridgeServer aiBridge, TactixScene scene, EditorSelection selection, EditorCommandStack commands, string projectRoot)
+    public SceneEditorTool(IMTLDevice device, AIBridgeServer aiBridge, TactixScene scene, EditorSelection selection, EditorCommandStack commands, AssetDatabase assets)
     {
         _device = device;
         _aiBridge = aiBridge;
-        _scene = scene; _selection = selection; _commands = commands; _projectRoot = projectRoot;
+        _scene = scene;
+        _selection = selection;
+        _commands = commands;
+        _assets = assets;
         Viewport = new ViewportPanelView(new CGRect(0, 0, 640, 360), _device, _scene.World, _selection, _commands);
     }
 
     public override void RegisterPanels(DockManager dockManager)
     {
         dockManager.RegisterPanel(new DockPanel("Scene.Hierarchy", "Hierarchy",
-            () => new HierarchyPanelView(new CGRect(0,0,320,240), _scene, _selection, _commands, _projectRoot)));
+            () => new HierarchyPanelView(new CGRect(0,0,320,240), _scene, _selection, _commands, _assets)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Viewport", "Viewport",
             () => Viewport));
@@ -61,8 +61,6 @@ public sealed class SceneEditorTool : EditorTool
 
     public override DockNode CreateDefaultLayout()
     {
-        // Equivalent conceptually to Esoterica's per-tool docking layout: the tool
-        // describes what belongs where, while DockManager owns AppKit realization.
         var hierarchy = new TabDockNode("Scene.Left", new[] { "Scene.Hierarchy" });
         var viewport = new TabDockNode("Scene.ViewportDock", new[] { "Scene.Viewport" });
         var bottom = new TabDockNode("Scene.Bottom", new[] { "Scene.Content", "Scene.Console", "Scene.AIBridge" }, "Scene.Content");
