@@ -1,7 +1,13 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct VSIn { float3 pos [[attribute(0)]]; float2 uv [[attribute(1)]]; };
+struct VSIn
+{
+    float3 pos [[attribute(0)]];
+    float3 normal [[attribute(1)]];
+    float2 uv [[attribute(2)]];
+};
+
 struct Uniforms
 {
     float aspect;
@@ -14,19 +20,41 @@ struct Uniforms
     float camUX; float camUY; float camUZ;
     float camFX; float camFY; float camFZ;
     float projectionScale;
+    float lightDX; float lightDY; float lightDZ;
+    float lightR; float lightG; float lightB;
+    float lightIntensity;
+    float ambient;
 };
-struct VSOut { float4 position [[position]]; float2 uv; float shade; float selected; };
+
+struct VSOut
+{
+    float4 position [[position]];
+    float2 uv;
+    float3 worldNormal;
+    float selected;
+};
+
+static float3 rotate_euler(float3 v, float3 degrees)
+{
+    const float d2r = 0.017453292519943295;
+    float ax=degrees.x*d2r, ay=degrees.y*d2r, az=degrees.z*d2r;
+    float sx=sin(ax), cx=cos(ax), sy=sin(ay), cy=cos(ay), sz=sin(az), cz=cos(az);
+    v=float3(v.x, cx*v.y-sx*v.z, sx*v.y+cx*v.z);
+    v=float3(cy*v.x+sy*v.z, v.y, -sy*v.x+cy*v.z);
+    v=float3(cz*v.x-sz*v.y, sz*v.x+cz*v.y, v.z);
+    return v;
+}
 
 vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
 {
-    const float d2r = 0.017453292519943295;
     float3 p = in.pos * float3(u.sx,u.sy,u.sz);
-    float ax=u.rx*d2r, ay=u.ry*d2r, az=u.rz*d2r;
-    float sx=sin(ax), cx=cos(ax), sy=sin(ay), cy=cos(ay), sz=sin(az), cz=cos(az);
-    p=float3(p.x, cx*p.y-sx*p.z, sx*p.y+cx*p.z);
-    p=float3(cy*p.x+sy*p.z, p.y, -sy*p.x+cy*p.z);
-    p=float3(cz*p.x-sz*p.y, sz*p.x+cz*p.y, p.z);
+    p = rotate_euler(p, float3(u.rx,u.ry,u.rz));
     p += float3(u.px,u.py,u.pz);
+
+    // Inverse-scale the normal before applying object rotation so non-uniform scale stays sane.
+    float3 safeScale=max(abs(float3(u.sx,u.sy,u.sz)),float3(0.0001));
+    float3 n = normalize(in.normal / safeScale);
+    n = normalize(rotate_euler(n, float3(u.rx,u.ry,u.rz)));
 
     float3 rel = p - float3(u.camPX,u.camPY,u.camPZ);
     float viewX = dot(rel,float3(u.camRX,u.camRY,u.camRZ));
@@ -38,18 +66,27 @@ vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
     VSOut o;
     o.position=float4(viewX*f/safeAspect, viewY*f, viewZ-0.15, viewZ);
     o.uv=in.uv;
-    o.shade=clamp(1.08-p.z*0.035,0.74,1.0);
+    o.worldNormal=n;
     o.selected=u.selected;
     return o;
 }
 
-fragment float4 ps_main(VSOut in [[stage_in]], texture2d<float> logo [[texture(0)]], sampler samp [[sampler(0)]])
+fragment float4 ps_main(VSOut in [[stage_in]], texture2d<float> logo [[texture(0)]], sampler samp [[sampler(0)]], constant Uniforms& u [[buffer(1)]])
 {
     float3 tex = logo.sample(samp,in.uv).rgb;
     float lum = dot(tex,float3(0.299,0.587,0.114));
-    float ghost = (lum - 0.5) * 0.18;
-    float3 base = float3(0.70,0.71,0.73) + ghost;
-    base *= in.shade;
-    if(in.selected > 0.5) base = mix(base,float3(0.90,0.63,0.22),0.22);
-    return float4(base,1.0);
+    float ghost = (lum - 0.5) * 0.10;
+    float3 albedo = float3(0.68,0.69,0.72) + ghost;
+
+    float3 N=normalize(in.worldNormal);
+    float3 L=normalize(-float3(u.lightDX,u.lightDY,u.lightDZ));
+    float ndotl=max(dot(N,L),0.0);
+    float3 lightColor=float3(u.lightR,u.lightG,u.lightB);
+    float3 lit=albedo*(u.ambient + ndotl*u.lightIntensity*lightColor);
+    lit=min(lit,float3(1.0));
+
+    if(in.selected > 0.5)
+        lit=mix(lit,float3(0.95,0.62,0.18),0.22);
+
+    return float4(lit,1.0);
 }
