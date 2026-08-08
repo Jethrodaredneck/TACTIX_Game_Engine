@@ -20,16 +20,27 @@ struct Uniforms
     float camUX; float camUY; float camUZ;
     float camFX; float camFY; float camFZ;
     float projectionScale;
-    float lightDX; float lightDY; float lightDZ;
-    float lightR; float lightG; float lightB;
-    float lightIntensity;
+
+    float dirDX; float dirDY; float dirDZ;
+    float dirR; float dirG; float dirB;
+    float dirIntensity;
     float ambient;
+
+    float localType;
+    float localPX; float localPY; float localPZ;
+    float localDX; float localDY; float localDZ;
+    float localR; float localG; float localB;
+    float localIntensity;
+    float localRange;
+    float localInnerCos;
+    float localOuterCos;
 };
 
 struct VSOut
 {
     float4 position [[position]];
     float2 uv;
+    float3 worldPosition;
     float3 worldNormal;
     float selected;
 };
@@ -51,7 +62,6 @@ vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
     p = rotate_euler(p, float3(u.rx,u.ry,u.rz));
     p += float3(u.px,u.py,u.pz);
 
-    // Inverse-scale the normal before applying object rotation so non-uniform scale stays sane.
     float3 safeScale=max(abs(float3(u.sx,u.sy,u.sz)),float3(0.0001));
     float3 n = normalize(in.normal / safeScale);
     n = normalize(rotate_euler(n, float3(u.rx,u.ry,u.rz)));
@@ -66,6 +76,7 @@ vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
     VSOut o;
     o.position=float4(viewX*f/safeAspect, viewY*f, viewZ-0.15, viewZ);
     o.uv=in.uv;
+    o.worldPosition=p;
     o.worldNormal=n;
     o.selected=u.selected;
     return o;
@@ -77,14 +88,35 @@ fragment float4 ps_main(VSOut in [[stage_in]], texture2d<float> logo [[texture(0
     float lum = dot(tex,float3(0.299,0.587,0.114));
     float ghost = (lum - 0.5) * 0.10;
     float3 albedo = float3(0.68,0.69,0.72) + ghost;
-
     float3 N=normalize(in.worldNormal);
-    float3 L=normalize(-float3(u.lightDX,u.lightDY,u.lightDZ));
-    float ndotl=max(dot(N,L),0.0);
-    float3 lightColor=float3(u.lightR,u.lightG,u.lightB);
-    float3 lit=albedo*(u.ambient + ndotl*u.lightIntensity*lightColor);
-    lit=min(lit,float3(1.0));
 
+    float3 dirL=normalize(-float3(u.dirDX,u.dirDY,u.dirDZ));
+    float dirNdotL=max(dot(N,dirL),0.0);
+    float3 lighting=float3(u.ambient) + dirNdotL*u.dirIntensity*float3(u.dirR,u.dirG,u.dirB);
+
+    if(u.localType > 0.5)
+    {
+        float3 lightPos=float3(u.localPX,u.localPY,u.localPZ);
+        float3 toLight=lightPos-in.worldPosition;
+        float distance=max(length(toLight),0.0001);
+        float3 L=toLight/distance;
+        float ndotl=max(dot(N,L),0.0);
+        float range=max(u.localRange,0.001);
+        float rangeFactor=clamp(1.0-distance/range,0.0,1.0);
+        float attenuation=rangeFactor*rangeFactor;
+
+        if(u.localType > 1.5)
+        {
+            float3 fromLight=normalize(in.worldPosition-lightPos);
+            float coneDot=dot(fromLight,normalize(float3(u.localDX,u.localDY,u.localDZ)));
+            float cone=smoothstep(u.localOuterCos,u.localInnerCos,coneDot);
+            attenuation*=cone;
+        }
+
+        lighting += ndotl*attenuation*u.localIntensity*float3(u.localR,u.localG,u.localB);
+    }
+
+    float3 lit=min(albedo*lighting,float3(1.0));
     if(in.selected > 0.5)
         lit=mix(lit,float3(0.95,0.62,0.18),0.22);
 
