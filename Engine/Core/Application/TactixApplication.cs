@@ -124,7 +124,8 @@ public sealed class TactixApplication
         try
         {
             _renderer = new MetalRenderer(device, _view!.MetalLayer, shaderSource);
-            _renderer.BindScene(_sceneManager.ActiveScene!.World, _selection);
+            _renderer.BindScene(_sceneManager.ActiveScene!.World);
+            _dockHost!.Viewport.AttachRenderer(_renderer);
             Trace("G: renderer created + scene bound");
 
             _view.SetRenderer(_renderer);
