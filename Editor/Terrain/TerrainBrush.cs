@@ -51,12 +51,13 @@ public static class TerrainBrush
                 var falloff = SmoothFalloff(1f - distance / radius);
                 var index = z * resolution + x;
                 var current = source.Heights[index];
+                var blend = MathF.Abs(strength) * falloff;
 
                 heights[index] = mode switch
                 {
                     TerrainBrushMode.RaiseLower => Math.Clamp(current + strength * falloff * 0.035f, -1f, 1f),
-                    TerrainBrushMode.Smooth => MathF.Lerp(current, NeighborhoodAverage(source, x, z), MathF.Abs(strength) * falloff),
-                    TerrainBrushMode.Flatten => MathF.Lerp(current, flattenHeight, MathF.Abs(strength) * falloff),
+                    TerrainBrushMode.Smooth => Lerp(current, NeighborhoodAverage(source, x, z), blend),
+                    TerrainBrushMode.Flatten => Lerp(current, flattenHeight, blend),
                     _ => current
                 };
             }
@@ -87,6 +88,8 @@ public static class TerrainBrush
         t = Math.Clamp(t, 0f, 1f);
         return t * t * (3f - 2f * t);
     }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * Math.Clamp(t, 0f, 1f);
 
     private static void Validate(TerrainAsset terrain)
     {
