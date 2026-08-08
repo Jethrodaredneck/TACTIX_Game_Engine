@@ -3,6 +3,7 @@ using CoreGraphics;
 using Metal;
 using System.Numerics;
 using TACTIX.Editor.Scene;
+using TACTIX.Editor.UI.Theme;
 using TACTIX.Engine.Rendering.Metal;
 using TACTIX.Engine.Runtime.ECS;
 
@@ -34,7 +35,10 @@ public sealed class ViewportPanelView : NSView
     private readonly World _world;
     private readonly EditorSelection _selection;
     private readonly EditorCommandStack _commands;
-    private readonly NSTextField _help;
+    private readonly NSView _toolbarChrome;
+    private readonly NSView _statusChrome;
+    private readonly NSTextField _status;
+    private readonly NSTextField _selectionStatus;
     private readonly InteractionSurface _interaction;
     private readonly NSButton[] _toolButtons;
     private readonly NSButton _spaceButton;
@@ -75,58 +79,69 @@ public sealed class ViewportPanelView : NSView
         };
         AddSubview(_interaction);
 
-        _help = new NSTextField(new CGRect(10, 8, 720, 20))
-        {
-            StringValue = "LMB Select/Gizmo   •   RMB Orbit   •   MMB Pan   •   Scroll Dolly   •   F Frame   •   Q/W/E/R Tools   •   X World/Local   •   Shift Snap",
-            Editable = false,
-            Selectable = false,
-            Bezeled = false,
-            DrawsBackground = false,
-            TextColor = NSColor.FromWhite(0.86f, 0.92f),
-            Font = NSFont.SystemFontOfSize(11),
-            AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MaxYMargin
-        };
-        AddSubview(_help);
+        _toolbarChrome = MakeChromeBackground();
+        AddSubview(_toolbarChrome);
 
         _toolButtons =
         [
-            MakeToolButton("Q Select", TransformTool.Select),
-            MakeToolButton("W Move", TransformTool.Translate),
-            MakeToolButton("E Rotate", TransformTool.Rotate),
-            MakeToolButton("R Scale", TransformTool.Scale)
+            MakeToolButton("Q", "Select", TransformTool.Select),
+            MakeToolButton("W", "Move", TransformTool.Translate),
+            MakeToolButton("E", "Rotate", TransformTool.Rotate),
+            MakeToolButton("R", "Scale", TransformTool.Scale)
         ];
         foreach (var button in _toolButtons) AddSubview(button);
 
         _spaceButton = new NSButton(new CGRect(0, 0, 74, 24))
         {
             Title = "World",
-            BezelStyle = NSBezelStyle.Rounded
+            BezelStyle = NSBezelStyle.TexturedRounded,
+            ToolTip = "Toggle transform space"
         };
+        StyleViewportButton(_spaceButton);
         _spaceButton.Activated += (_, _) =>
         {
             ActiveSpace = ActiveSpace == TransformSpace.World ? TransformSpace.Local : TransformSpace.World;
             _spaceButton.Title = ActiveSpace.ToString();
+            RefreshViewportStatus();
             _interaction.NeedsDisplay = true;
         };
         AddSubview(_spaceButton);
 
+        _statusChrome = MakeChromeBackground();
+        AddSubview(_statusChrome);
+
+        _status = EditorTheme.Label("", 11, false, true);
+        AddSubview(_status);
+
+        _selectionStatus = EditorTheme.Label("", 10, true);
+        AddSubview(_selectionStatus);
+
         _selection.Changed += OnEditorStateChanged;
         _world.Changed += OnEditorStateChanged;
         UpdateToolButtons();
+        RefreshViewportStatus();
     }
 
     public override void Layout()
     {
         base.Layout();
-        const float gap = 6f;
-        var x = 10f;
-        var y = (float)Math.Max(8, Bounds.Height - 34);
+        const float gap = 5f;
+        const float buttonWidth = 34f;
+        const float buttonHeight = 24f;
+        var x = 14f;
+        var y = (float)Math.Max(8, Bounds.Height - 38);
+        _toolbarChrome.Frame = new CGRect(10, y - 3, 230, 30);
         foreach (var button in _toolButtons)
         {
-            button.Frame = new CGRect(x, y, 78, 24);
-            x += 78 + gap;
+            button.Frame = new CGRect(x, y, buttonWidth, buttonHeight);
+            x += buttonWidth + gap;
         }
-        _spaceButton.Frame = new CGRect(x + 4, y, 74, 24);
+        _spaceButton.Frame = new CGRect(x + 5, y, 68, buttonHeight);
+
+        var statusWidth = (float)Math.Min(Math.Max(360, Bounds.Width * 0.46), Math.Max(180, Bounds.Width - 20));
+        _statusChrome.Frame = new CGRect(10, 10, statusWidth, 34);
+        _status.Frame = new CGRect(20, 25, Math.Max(80, statusWidth - 30), 15);
+        _selectionStatus.Frame = new CGRect(20, 12, Math.Max(80, statusWidth - 30), 13);
     }
 
     public void AttachRenderer(MetalRenderer renderer)
@@ -135,15 +150,38 @@ public sealed class ViewportPanelView : NSView
         SyncRendererView();
     }
 
-    private NSButton MakeToolButton(string title, TransformTool tool)
+    private NSButton MakeToolButton(string title, string tooltip, TransformTool tool)
     {
-        var button = new NSButton(new CGRect(0, 0, 78, 24))
+        var button = new NSButton(new CGRect(0, 0, 34, 24))
         {
             Title = title,
-            BezelStyle = NSBezelStyle.Rounded
+            BezelStyle = NSBezelStyle.TexturedRounded,
+            ToolTip = tooltip
         };
+        StyleViewportButton(button);
         button.Activated += (_, _) => SetTool(tool);
         return button;
+    }
+
+    private static NSView MakeChromeBackground()
+    {
+        var view = new NSView(CGRect.Empty) { WantsLayer = true };
+        view.Layer!.BackgroundColor = EditorTheme.Panel.ColorWithAlphaComponent((nfloat)0.88).CGColor;
+        view.Layer!.BorderColor = EditorTheme.Border.ColorWithAlphaComponent((nfloat)0.82).CGColor;
+        view.Layer!.BorderWidth = 1;
+        view.Layer!.CornerRadius = 6;
+        return view;
+    }
+
+    private static void StyleViewportButton(NSButton button)
+    {
+        button.WantsLayer = true;
+        button.Font = NSFont.BoldSystemFontOfSize(11)!;
+        button.ContentTintColor = EditorTheme.TextMuted;
+        button.Layer!.CornerRadius = 5;
+        button.Layer!.BorderWidth = 1;
+        button.Layer!.BorderColor = EditorTheme.Border.CGColor;
+        button.Layer!.BackgroundColor = EditorTheme.Field.CGColor;
     }
 
     private void SetTool(TransformTool tool)
@@ -152,14 +190,47 @@ public sealed class ViewportPanelView : NSView
             CancelTransform();
         ActiveTool = tool;
         UpdateToolButtons();
+        RefreshViewportStatus();
         _interaction.NeedsDisplay = true;
     }
 
     private void UpdateToolButtons()
     {
-        var labels = new[] { "Q Select", "W Move", "E Rotate", "R Scale" };
+        var labels = new[] { "Q", "W", "E", "R" };
         for (var i = 0; i < _toolButtons.Length; i++)
-            _toolButtons[i].Title = ((int)ActiveTool == i ? "● " : "") + labels[i];
+        {
+            var active = (int)ActiveTool == i;
+            _toolButtons[i].Title = labels[i];
+            _toolButtons[i].ContentTintColor = active ? NSColor.White : EditorTheme.TextMuted;
+            _toolButtons[i].Layer!.BackgroundColor = (active ? EditorTheme.AccentSoft : EditorTheme.Field).CGColor;
+            _toolButtons[i].Layer!.BorderColor = (active ? EditorTheme.Accent : EditorTheme.Border).CGColor;
+        }
+    }
+
+    private void RefreshViewportStatus()
+    {
+        var tool = ActiveTool switch
+        {
+            TransformTool.Select => "Select",
+            TransformTool.Translate => "Move",
+            TransformTool.Rotate => "Rotate",
+            TransformTool.Scale => "Scale",
+            _ => "Tool"
+        };
+
+        _status.StringValue = _transforming && _activeAxis != GizmoAxis.None
+            ? $"{tool} {_activeAxis} active"
+            : $"{tool} | {ActiveSpace} | Perspective";
+
+        if (TryGetSelectedTransform(out var entity, out var transform))
+        {
+            _selectionStatus.StringValue =
+                $"Entity {entity.Id}  P {FormatVector(transform.Position)}  R {FormatVector(transform.Rotation)}";
+        }
+        else
+        {
+            _selectionStatus.StringValue = "No selection";
+        }
     }
 
     private void OnEditorStateChanged()
@@ -167,6 +238,7 @@ public sealed class ViewportPanelView : NSView
         if (_selection.ActiveEntity.HasValue && !_world.Exists(_selection.ActiveEntity.Value))
             _selection.Select(null);
         SyncRendererView();
+        RefreshViewportStatus();
         _interaction.NeedsDisplay = true;
     }
 
@@ -270,6 +342,7 @@ public sealed class ViewportPanelView : NSView
             case "x":
                 ActiveSpace = ActiveSpace == TransformSpace.World ? TransformSpace.Local : TransformSpace.World;
                 _spaceButton.Title = ActiveSpace.ToString();
+                RefreshViewportStatus();
                 _interaction.NeedsDisplay = true;
                 return;
             case "\u001b":
@@ -305,6 +378,7 @@ public sealed class ViewportPanelView : NSView
             _rotationMouseAngleStart = 0f;
 
         _interaction.NeedsDisplay = true;
+        RefreshViewportStatus();
     }
 
     private void ApplyTransformPreview(CGPoint mouse, bool snap)
@@ -351,6 +425,7 @@ public sealed class ViewportPanelView : NSView
         }
 
         _world.Set(_transformEntity.Value, after);
+        RefreshViewportStatus();
         _interaction.NeedsDisplay = true;
     }
 
@@ -388,6 +463,7 @@ public sealed class ViewportPanelView : NSView
         _transforming = false;
         _transformEntity = null;
         _activeAxis = GizmoAxis.None;
+        RefreshViewportStatus();
         _interaction.NeedsDisplay = true;
     }
 
@@ -490,6 +566,58 @@ public sealed class ViewportPanelView : NSView
                 DrawRotationGizmo(transform);
                 break;
         }
+    }
+
+    internal void DrawViewportOverlay()
+    {
+        DrawWorldGrid();
+    }
+
+    private void DrawWorldGrid()
+    {
+        var width = (float)Math.Max(Bounds.Width, 1);
+        var height = (float)Math.Max(Bounds.Height, 1);
+        var step = GridStep(Camera.Distance);
+        var extent = MathF.Min(160f, MathF.Max(12f, MathF.Ceiling(Camera.Distance * 2.8f / step) * step));
+        var lineCount = (int)Math.Min(80, MathF.Ceiling(extent / step));
+
+        var minor = NSColor.FromRgb(0.34f, 0.36f, 0.40f).ColorWithAlphaComponent((nfloat)0.24);
+        var major = NSColor.FromRgb(0.46f, 0.49f, 0.55f).ColorWithAlphaComponent((nfloat)0.36);
+        var xAxis = AxisColor(GizmoAxis.X, false).ColorWithAlphaComponent((nfloat)0.46);
+        var zAxis = AxisColor(GizmoAxis.Z, false).ColorWithAlphaComponent((nfloat)0.46);
+
+        for (var i = -lineCount; i <= lineCount; i++)
+        {
+            var c = i * step;
+            var isAxis = i == 0;
+            var isMajor = i % 5 == 0;
+            var color = isAxis ? zAxis : isMajor ? major : minor;
+            DrawProjectedLine(new Vector3(c, 0, -extent), new Vector3(c, 0, extent), color, isAxis ? 1.4f : isMajor ? 1.1f : 0.7f, width, height);
+
+            color = isAxis ? xAxis : isMajor ? major : minor;
+            DrawProjectedLine(new Vector3(-extent, 0, c), new Vector3(extent, 0, c), color, isAxis ? 1.4f : isMajor ? 1.1f : 0.7f, width, height);
+        }
+    }
+
+    private void DrawProjectedLine(Vector3 a, Vector3 b, NSColor color, float lineWidth, float width, float height)
+    {
+        if (!Camera.TryProject(a, width, height, out var p0, out _) ||
+            !Camera.TryProject(b, width, height, out var p1, out _))
+            return;
+
+        color.SetStroke();
+        var path = new NSBezierPath { LineWidth = lineWidth };
+        path.MoveTo(new CGPoint(p0.X, p0.Y));
+        path.LineTo(new CGPoint(p1.X, p1.Y));
+        path.Stroke();
+    }
+
+    private static float GridStep(float distance)
+    {
+        if (distance > 80f) return 10f;
+        if (distance > 34f) return 5f;
+        if (distance > 14f) return 2f;
+        return 1f;
     }
 
     private void DrawLinearGizmo(TransformComponent transform, bool scaleHandles)
@@ -702,6 +830,8 @@ public sealed class ViewportPanelView : NSView
         return radians;
     }
 
+    private static string FormatVector(Vector3 v) => $"{v.X:0.##}, {v.Y:0.##}, {v.Z:0.##}";
+
     private static float GetAxisComponent(Vector3 v, GizmoAxis axis) => axis switch
     {
         GizmoAxis.X => v.X,
@@ -737,6 +867,7 @@ public sealed class ViewportPanelView : NSView
         public override void DrawRect(CGRect dirtyRect)
         {
             base.DrawRect(dirtyRect);
+            _owner.DrawViewportOverlay();
             _owner.DrawGizmo();
         }
 
