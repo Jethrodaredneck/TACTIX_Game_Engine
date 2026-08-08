@@ -165,7 +165,7 @@ public sealed class ViewportPanelView : NSView
 
     private static NSView MakeChromeBackground()
     {
-        var view = new NSView(CGRect.Empty) { WantsLayer = true };
+        var view = new ChromeBackgroundView();
         view.Layer!.BackgroundColor = EditorTheme.Panel.ColorWithAlphaComponent((nfloat)0.88).CGColor;
         view.Layer!.BorderColor = EditorTheme.Border.ColorWithAlphaComponent((nfloat)0.82).CGColor;
         view.Layer!.BorderWidth = 1;
@@ -852,6 +852,16 @@ public sealed class ViewportPanelView : NSView
 
     private static bool TransformsEqual(TransformComponent a, TransformComponent b)
         => a.Position == b.Position && a.Rotation == b.Rotation && a.Scale == b.Scale;
+
+    private sealed class ChromeBackgroundView : NSView
+    {
+        public ChromeBackgroundView() : base(CGRect.Empty)
+        {
+            WantsLayer = true;
+        }
+
+        public override NSView HitTest(CGPoint aPoint) => null!;
+    }
 
     private sealed class InteractionSurface : NSView
     {
