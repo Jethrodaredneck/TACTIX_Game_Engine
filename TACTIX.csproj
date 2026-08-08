@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-macos15.0</TargetFramework>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <ApplicationTitle>TACTIX</ApplicationTitle>
+    <ApplicationId>com.tactix.engine</ApplicationId>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <CreatePackage>false</CreatePackage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Tool projects are built separately. -->
+    <Compile Remove="Tools/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Runtime shader compilation uses Triangle.metal from the app bundle. -->
+    <Metal Remove="Shaders/**/*.metal" />
+    <BundleResource Include="Shaders/Triangle.metal" />
+    <BundleResource Include="Shaders/default.metallib" Condition="Exists('Shaders/default.metallib')" />
+    <BundleResource Include="Assets/Branding/TACTIX_EngineLogo.jpg" />
+  </ItemGroup>
+</Project>
