@@ -5,17 +5,27 @@ using ImageIO;
 using Metal;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Core.Logging;
 using TACTIX.Engine.Runtime.ECS;
+using TACTIX.Engine.Runtime.Terrain;
 
 namespace TACTIX.Engine.Rendering.Metal;
 
 public sealed class MetalRenderer : IDisposable
 {
+    private sealed class TerrainGpu
+    {
+        public required IMTLBuffer Buffer;
+        public required int VertexCount;
+        public required string ContentHash;
+    }
+
     private readonly IMTLDevice _device;
     private readonly IMTLCommandQueue _queue;
     private readonly CAMetalLayer _layer;
     private readonly Dictionary<BuiltInMesh, (IMTLBuffer Buffer, int VertexCount)> _meshes = new();
+    private readonly Dictionary<AssetGuid, TerrainGpu> _terrainMeshes = new();
     private readonly IMTLLibrary _library;
     private readonly IMTLRenderPipelineState _pipeline;
     private readonly IMTLDepthStencilState _depthState;
@@ -23,6 +33,7 @@ public sealed class MetalRenderer : IDisposable
     private readonly IMTLSamplerState _sampler;
 
     private World? _world;
+    private AssetDatabase? _assets;
     private int _selectedEntityId;
     private Vector3 _cameraPosition = new(0, -0.97f, -6.93f);
     private Vector3 _cameraRight = Vector3.UnitX;
@@ -44,11 +55,24 @@ public sealed class MetalRenderer : IDisposable
         public float CamUX, CamUY, CamUZ;
         public float CamFX, CamFY, CamFZ;
         public float ProjectionScale;
-        public float LightDX, LightDY, LightDZ;
-        public float LightR, LightG, LightB;
-        public float LightIntensity;
+
+        public float DirDX, DirDY, DirDZ;
+        public float DirR, DirG, DirB;
+        public float DirIntensity;
         public float Ambient;
+
+        public float LocalType;
+        public float LocalPX, LocalPY, LocalPZ;
+        public float LocalDX, LocalDY, LocalDZ;
+        public float LocalR, LocalG, LocalB;
+        public float LocalIntensity;
+        public float LocalRange;
+        public float LocalInnerCos;
+        public float LocalOuterCos;
     }
+
+    private readonly record struct DirectionalLightData(Vector3 Direction, Vector3 Color, float Intensity);
+    private readonly record struct LocalLightData(float Type, Vector3 Position, Vector3 Direction, Vector3 Color, float Intensity, float Range, float InnerCos, float OuterCos);
 
     public MetalRenderer(IMTLDevice device, CAMetalLayer layer, string shaderSource)
     {
@@ -64,6 +88,7 @@ public sealed class MetalRenderer : IDisposable
     }
 
     public void BindScene(World world) => _world = world;
+    public void BindAssets(AssetDatabase assets) => _assets = assets;
 
     public void SetEditorView(Vector3 position, Vector3 right, Vector3 up, Vector3 forward, float projectionScale, Entity? selectedEntity)
     {
@@ -166,7 +191,6 @@ public sealed class MetalRenderer : IDisposable
     private static float[] Cube()
     {
         var a = new List<float>(36 * 8);
-        // Consistent clockwise winding as seen from outside; normals point outward.
         Quad(a, new(-1,-1, 1), new( 1, 1, 1), new( 1,-1, 1), new(-1, 1, 1),  Vector3.UnitZ);
         Quad(a, new( 1,-1,-1), new(-1, 1,-1), new(-1,-1,-1), new( 1, 1,-1), -Vector3.UnitZ);
         Quad(a, new(-1,-1,-1), new(-1, 1, 1), new(-1,-1, 1), new(-1, 1,-1), -Vector3.UnitX);
@@ -292,7 +316,7 @@ public sealed class MetalRenderer : IDisposable
         finally { handle.Free(); }
     }
 
-    private (Vector3 Direction, Vector3 Color, float Intensity) ResolveDirectionalLight()
+    private DirectionalLightData ResolveDirectionalLight()
     {
         if (_world != null)
         {
@@ -300,10 +324,28 @@ public sealed class MetalRenderer : IDisposable
             {
                 if (!light.Enabled || light.Type != LightType.Directional) continue;
                 var rotation = _world.Has<TransformComponent>(entity) ? _world.Get<TransformComponent>(entity).Rotation : new Vector3(50,-30,0);
-                return (RotateEuler(Vector3.UnitZ, rotation), light.Color, MathF.Max(0, light.Intensity));
+                return new DirectionalLightData(RotateEuler(Vector3.UnitZ, rotation), light.Color, MathF.Max(0, light.Intensity));
             }
         }
-        return (Vector3.Normalize(new Vector3(0.4f,-1f,0.3f)), new Vector3(1f,0.96f,0.88f), 1.15f);
+        return new DirectionalLightData(Vector3.Normalize(new Vector3(0.4f,-1f,0.3f)), new Vector3(1f,0.96f,0.88f), 1.15f);
+    }
+
+    private LocalLightData ResolveLocalLight()
+    {
+        if (_world != null)
+        {
+            foreach (var (entity, light) in _world.Query<LightComponent>())
+            {
+                if (!light.Enabled || light.Type == LightType.Directional) continue;
+                var transform = _world.Has<TransformComponent>(entity) ? _world.Get<TransformComponent>(entity) : TransformComponent.Identity;
+                var type = light.Type == LightType.Point ? 1f : 2f;
+                var direction = RotateEuler(Vector3.UnitZ, transform.Rotation);
+                var inner = MathF.Cos(Math.Clamp(light.InnerConeDegrees, 0f, 89.9f) * MathF.PI / 180f);
+                var outer = MathF.Cos(Math.Clamp(MathF.Max(light.OuterConeDegrees, light.InnerConeDegrees + 0.01f), 0.01f, 89.99f) * MathF.PI / 180f);
+                return new LocalLightData(type, transform.Position, direction, light.Color, MathF.Max(0, light.Intensity), MathF.Max(0.01f, light.Range), inner, outer);
+            }
+        }
+        return new LocalLightData(0, Vector3.Zero, Vector3.UnitZ, Vector3.Zero, 0, 1, 1, 0);
     }
 
     private static Vector3 RotateEuler(Vector3 vector, Vector3 degrees)
@@ -317,10 +359,76 @@ public sealed class MetalRenderer : IDisposable
         return Vector3.Normalize(vector);
     }
 
+    private TerrainGpu? GetTerrainGpu(AssetGuid guid)
+    {
+        if (_assets == null || !_assets.Registry.TryGet(guid, out var meta)) return null;
+        if (_terrainMeshes.TryGetValue(guid, out var cached) && cached.ContentHash == meta.ContentHash) return cached;
+
+        if (_terrainMeshes.Remove(guid, out var old)) old.Buffer.Dispose();
+
+        var terrain = _assets.LoadTerrain(guid);
+        var mesh = TerrainMeshGenerator.Generate(terrain);
+        var expanded = new float[mesh.Indices.Length * 8];
+        var dst = 0;
+        foreach (var index in mesh.Indices)
+        {
+            var i = checked((int)index);
+            var p=i*3; var uv=i*2;
+            expanded[dst++]=mesh.Positions[p]; expanded[dst++]=mesh.Positions[p+1]; expanded[dst++]=mesh.Positions[p+2];
+            expanded[dst++]=mesh.Normals[p]; expanded[dst++]=mesh.Normals[p+1]; expanded[dst++]=mesh.Normals[p+2];
+            expanded[dst++]=mesh.UV0[uv]; expanded[dst++]=mesh.UV0[uv+1];
+        }
+
+        var handle=GCHandle.Alloc(expanded,GCHandleType.Pinned);
+        try
+        {
+            var buffer=_device.CreateBuffer(handle.AddrOfPinnedObject(),(nuint)(expanded.Length*sizeof(float)),MTLResourceOptions.CpuCacheModeDefault);
+            var gpu=new TerrainGpu{Buffer=buffer,VertexCount=expanded.Length/8,ContentHash=meta.ContentHash};
+            _terrainMeshes[guid]=gpu;
+            return gpu;
+        }
+        finally { handle.Free(); }
+    }
+
+    private Uniforms MakeUniforms(TransformComponent t, bool selected, float aspect, DirectionalLightData dir, LocalLightData local)
+    {
+        return new Uniforms
+        {
+            Aspect=aspect,
+            PX=t.Position.X,PY=t.Position.Y,PZ=t.Position.Z,
+            RX=t.Rotation.X,RY=t.Rotation.Y,RZ=t.Rotation.Z,
+            SX=t.Scale.X,SY=t.Scale.Y,SZ=t.Scale.Z,
+            Selected=selected?1:0,
+            CamPX=_cameraPosition.X,CamPY=_cameraPosition.Y,CamPZ=_cameraPosition.Z,
+            CamRX=_cameraRight.X,CamRY=_cameraRight.Y,CamRZ=_cameraRight.Z,
+            CamUX=_cameraUp.X,CamUY=_cameraUp.Y,CamUZ=_cameraUp.Z,
+            CamFX=_cameraForward.X,CamFY=_cameraForward.Y,CamFZ=_cameraForward.Z,
+            ProjectionScale=_projectionScale,
+            DirDX=dir.Direction.X,DirDY=dir.Direction.Y,DirDZ=dir.Direction.Z,
+            DirR=dir.Color.X,DirG=dir.Color.Y,DirB=dir.Color.Z,DirIntensity=dir.Intensity,Ambient=.18f,
+            LocalType=local.Type,
+            LocalPX=local.Position.X,LocalPY=local.Position.Y,LocalPZ=local.Position.Z,
+            LocalDX=local.Direction.X,LocalDY=local.Direction.Y,LocalDZ=local.Direction.Z,
+            LocalR=local.Color.X,LocalG=local.Color.Y,LocalB=local.Color.Z,
+            LocalIntensity=local.Intensity,LocalRange=local.Range,LocalInnerCos=local.InnerCos,LocalOuterCos=local.OuterCos
+        };
+    }
+
+    private void DrawMesh(IMTLRenderCommandEncoder enc, IMTLBuffer meshBuffer, int vertexCount, Uniforms uniforms, List<IMTLBuffer> frameUniformBuffers)
+    {
+        var uniformBuffer=_device.CreateBuffer((nuint)Marshal.SizeOf<Uniforms>(),MTLResourceOptions.CpuCacheModeDefault);
+        Marshal.StructureToPtr(uniforms,uniformBuffer.Contents,false);
+        frameUniformBuffers.Add(uniformBuffer);
+        enc.SetVertexBuffer(meshBuffer,0,0);
+        enc.SetVertexBuffer(uniformBuffer,0,1);
+        enc.SetFragmentBuffer(uniformBuffer,0,1);
+        enc.DrawPrimitives(MTLPrimitiveType.Triangle,0,(nuint)vertexCount);
+    }
+
     public void Draw()
     {
         using var pool=new NSAutoreleasePool();
-        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: normal-aware lit scene path running");
+        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: lit primitives + terrain heightfield path running");
         var drawable=_layer.NextDrawable(); if(drawable==null) return;
         var tex=drawable.Texture;
         var depthDesc=MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.Depth32Float,tex.Width,tex.Height,false);
@@ -336,8 +444,11 @@ public sealed class MetalRenderer : IDisposable
         enc.SetCullMode(MTLCullMode.Back); enc.SetFrontFacingWinding(MTLWinding.Clockwise);
         enc.SetFragmentTexture(_logoTexture,0); enc.SetFragmentSamplerState(_sampler,0);
         enc.SetViewport(new MTLViewport{OriginX=0,OriginY=0,Width=tex.Width,Height=tex.Height,ZNear=0,ZFar=1});
+
         var frameUniformBuffers=new List<IMTLBuffer>();
-        var light=ResolveDirectionalLight();
+        var dir=ResolveDirectionalLight();
+        var local=ResolveLocalLight();
+        var aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height));
 
         if(_world!=null)
         {
@@ -345,29 +456,16 @@ public sealed class MetalRenderer : IDisposable
             {
                 if(!_world.Has<TransformComponent>(entity)||!_meshes.TryGetValue(mr.Mesh,out var mesh)) continue;
                 var t=_world.Get<TransformComponent>(entity);
-                var u=new Uniforms
-                {
-                    Aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height)),
-                    PX=t.Position.X,PY=t.Position.Y,PZ=t.Position.Z,
-                    RX=t.Rotation.X,RY=t.Rotation.Y,RZ=t.Rotation.Z,
-                    SX=t.Scale.X,SY=t.Scale.Y,SZ=t.Scale.Z,
-                    Selected=_selectedEntityId==entity.Id?1:0,
-                    CamPX=_cameraPosition.X,CamPY=_cameraPosition.Y,CamPZ=_cameraPosition.Z,
-                    CamRX=_cameraRight.X,CamRY=_cameraRight.Y,CamRZ=_cameraRight.Z,
-                    CamUX=_cameraUp.X,CamUY=_cameraUp.Y,CamUZ=_cameraUp.Z,
-                    CamFX=_cameraForward.X,CamFY=_cameraForward.Y,CamFZ=_cameraForward.Z,
-                    ProjectionScale=_projectionScale,
-                    LightDX=light.Direction.X,LightDY=light.Direction.Y,LightDZ=light.Direction.Z,
-                    LightR=light.Color.X,LightG=light.Color.Y,LightB=light.Color.Z,
-                    LightIntensity=light.Intensity,Ambient=.22f
-                };
-                var uniformBuffer=_device.CreateBuffer((nuint)Marshal.SizeOf<Uniforms>(),MTLResourceOptions.CpuCacheModeDefault);
-                Marshal.StructureToPtr(u,uniformBuffer.Contents,false);
-                frameUniformBuffers.Add(uniformBuffer);
-                enc.SetVertexBuffer(mesh.Buffer,0,0);
-                enc.SetVertexBuffer(uniformBuffer,0,1);
-                enc.SetFragmentBuffer(uniformBuffer,0,1);
-                enc.DrawPrimitives(MTLPrimitiveType.Triangle,0,(nuint)mesh.VertexCount);
+                DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+            }
+
+            foreach(var (entity,terrain) in _world.Query<TerrainComponent>())
+            {
+                if(!_world.Has<TransformComponent>(entity)) continue;
+                var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);
+                if(gpu==null) continue;
+                var t=_world.Get<TransformComponent>(entity);
+                DrawMesh(enc,gpu.Buffer,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
             }
         }
 
@@ -380,6 +478,8 @@ public sealed class MetalRenderer : IDisposable
     {
         foreach(var mesh in _meshes.Values) mesh.Buffer.Dispose();
         _meshes.Clear();
+        foreach(var terrain in _terrainMeshes.Values) terrain.Buffer.Dispose();
+        _terrainMeshes.Clear();
         _logoTexture.Dispose(); _sampler.Dispose(); _depthState.Dispose(); _pipeline.Dispose(); _library.Dispose(); _queue.Dispose();
     }
 }
