@@ -33,15 +33,20 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Select Xcode
+      - name: Select Xcode 16.4
         if: steps.source.outputs.present == 'true'
         shell: bash
         run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          XCODE_ROOT=/Applications/Xcode_16.4.app/Contents/Developer
+          test -d "$XCODE_ROOT"
+          sudo xcode-select -s "$XCODE_ROOT"
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
-          xcrun -f metal
-          xcrun -f metallib
+          xcrun --sdk macosx --find metal
+          xcrun --sdk macosx --find metallib
+          xcrun --sdk macosx --find install_name_tool
 
       - name: Restore macOS workload
         if: steps.source.outputs.present == 'true'
