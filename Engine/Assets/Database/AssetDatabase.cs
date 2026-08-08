@@ -91,6 +91,29 @@ public sealed class AssetDatabase
         return meta;
     }
 
+    public AssetMeta SaveTerrain(string projectPath, TerrainAsset terrain, string name = "")
+    {
+        var full = ResolveProjectPath(projectPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var guid = terrain.Guid.Value == Guid.Empty ? AssetGuid.New() : terrain.Guid;
+        terrain = terrain with { Guid = guid };
+
+        var meta = new AssetMeta
+        {
+            Guid = guid,
+            Type = AssetType.Terrain,
+            ProjectPath = NormalizeProjectPath(projectPath),
+            Name = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(projectPath) : name,
+            ContentHash = ComputeHash(terrain),
+            ImportedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        JsonAssetSerializer.Save(full, AssetFile.ForTerrain(meta, terrain));
+        Registry.Upsert(meta);
+        return meta;
+    }
+
     public MeshAsset LoadMesh(AssetGuid guid)
     {
         if (!Registry.TryGet(guid, out var meta))
@@ -117,6 +140,20 @@ public sealed class AssetDatabase
         var file = JsonAssetSerializer.Load(full);
         if (file.Material == null) throw new InvalidDataException("Material payload missing.");
         return file.Material!.Value;
+    }
+
+    public TerrainAsset LoadTerrain(AssetGuid guid)
+    {
+        if (!Registry.TryGet(guid, out var meta))
+            throw new FileNotFoundException($"Asset not registered: {guid}");
+
+        if (meta.Type != AssetType.Terrain)
+            throw new InvalidOperationException($"Asset {guid} is {meta.Type}, not Terrain.");
+
+        var full = ResolveProjectPath(meta.ProjectPath);
+        var file = JsonAssetSerializer.Load(full);
+        if (file.Terrain == null) throw new InvalidDataException("Terrain payload missing.");
+        return file.Terrain.Value;
     }
 
     public string ResolveProjectPath(string projectPath)
@@ -169,5 +206,27 @@ public sealed class AssetDatabase
         var bytes = Encoding.UTF8.GetBytes(s);
         var hash = sha.ComputeHash(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string ComputeHash(TerrainAsset terrain)
+    {
+        using var sha = SHA256.Create();
+        void AddBytes(byte[] bytes) => sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+
+        AddBytes(BitConverter.GetBytes(terrain.Resolution));
+        AddBytes(BitConverter.GetBytes(terrain.SizeX));
+        AddBytes(BitConverter.GetBytes(terrain.SizeZ));
+        AddBytes(BitConverter.GetBytes(terrain.HeightScale));
+        foreach (var height in terrain.Heights) AddBytes(BitConverter.GetBytes(height));
+        foreach (var layer in terrain.Layers)
+        {
+            AddBytes(Encoding.UTF8.GetBytes(layer.MaterialGuid?.ToString() ?? ""));
+            AddBytes(BitConverter.GetBytes(layer.TilingX));
+            AddBytes(BitConverter.GetBytes(layer.TilingZ));
+            AddBytes(BitConverter.GetBytes(layer.BlendStrength));
+        }
+
+        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
     }
 }
