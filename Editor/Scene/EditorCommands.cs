@@ -97,7 +97,22 @@ public sealed class DuplicateEntityCommand : IEditorCommand
         _world.Add(e,new NameComponent(name+" Copy"));
         if(_world.Has<TransformComponent>(_source))
         {
-            var t=_world.Get<TransformComponent>(_source); t.Position += new Vector3(0.35f,0.2f,0); _world.Add(e,t);
+            var t=_world.Get<TransformComponent>(_source);
+            var extent = MathF.Max(MathF.Abs(t.Scale.X), MathF.Max(MathF.Abs(t.Scale.Y), MathF.Abs(t.Scale.Z)));
+            var meshRadius = 1f;
+            if (_world.Has<MeshRendererComponent>(_source))
+            {
+                meshRadius = _world.Get<MeshRendererComponent>(_source).Mesh switch
+                {
+                    BuiltInMesh.Cube => 1.75f,
+                    BuiltInMesh.Plane => 1.45f,
+                    BuiltInMesh.Capsule => 1.9f,
+                    _ => 1.35f
+                };
+            }
+            var separation = MathF.Max(1.5f, meshRadius * MathF.Max(extent, 0.1f) * 2.15f);
+            t.Position += new Vector3(separation, 0, 0);
+            _world.Add(e,t);
         }
         if(_world.Has<MeshRendererComponent>(_source))_world.Add(e,_world.Get<MeshRendererComponent>(_source));
         _selection.Select(e);
