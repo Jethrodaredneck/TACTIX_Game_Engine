@@ -1,12 +1,13 @@
 using System.Numerics;
 using System.Text.Json;
+using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Runtime.ECS;
 
 namespace TACTIX.Engine.Runtime.Scene;
 
 public static class SceneSerializer
 {
-    private sealed class SceneFile { public int Version { get; set; } = 1; public string Name { get; set; } = "Main"; public List<EntityFile> Entities { get; set; } = new(); }
+    private sealed class SceneFile { public int Version { get; set; } = 2; public string Name { get; set; } = "Main"; public List<EntityFile> Entities { get; set; } = new(); }
     private sealed class EntityFile
     {
         public int Id { get; set; }
@@ -16,6 +17,7 @@ public static class SceneSerializer
         public float[] Scale { get; set; } = [1,1,1];
         public BuiltInMesh? Mesh { get; set; }
         public string Material { get; set; } = "TACTIX_DefaultPrimitive";
+        public string TerrainAssetGuid { get; set; } = "";
     }
 
     public static void Save(Scene scene, string path)
@@ -33,6 +35,10 @@ public static class SceneSerializer
             if(scene.World.Has<MeshRendererComponent>(e))
             {
                 var m=scene.World.Get<MeshRendererComponent>(e); f.Mesh=m.Mesh; f.Material=m.Material;
+            }
+            if(scene.World.Has<TerrainComponent>(e))
+            {
+                f.TerrainAssetGuid=scene.World.Get<TerrainComponent>(e).TerrainAssetGuid.ToString();
             }
             file.Entities.Add(f);
         }
@@ -56,6 +62,8 @@ public static class SceneSerializer
             if(f.Scale.Length>=3)t.Scale=new Vector3(f.Scale[0],f.Scale[1],f.Scale[2]);
             scene.World.Add(e,t);
             if(f.Mesh.HasValue)scene.World.Add(e,new MeshRendererComponent(f.Mesh.Value,f.Material));
+            if(!string.IsNullOrWhiteSpace(f.TerrainAssetGuid) && AssetGuid.TryParse(f.TerrainAssetGuid,out var terrainGuid))
+                scene.World.Add(e,new TerrainComponent(terrainGuid));
         }
     }
 }
