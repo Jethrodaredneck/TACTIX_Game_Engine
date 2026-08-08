@@ -1,0 +1,13 @@
+using AppKit; using CoreGraphics; using System.Globalization; using System.Numerics; using TACTIX.Editor.Scene; using TACTIX.Engine.Runtime.ECS;
+namespace TACTIX.Editor.UI.Inspector;
+public sealed class InspectorPanelView : NSView
+{
+    private readonly World _world; private readonly EditorSelection _selection; private readonly EditorCommandStack _commands; private readonly NSTextField _title;
+    private readonly NSTextField[] _fields=new NSTextField[9];
+    public InspectorPanelView(CGRect frame,World world,EditorSelection selection,EditorCommandStack commands):base(frame){_world=world;_selection=selection;_commands=commands;WantsLayer=true;Layer!.BackgroundColor=NSColor.FromRgb(25,25,28).CGColor;
+        _title=Label("Nothing selected",12,frame.Height-38,(nfloat)Math.Max(80.0, (double)frame.Width - 24.0),22);AddSubview(_title); string[] names={"PX","PY","PZ","RX","RY","RZ","SX","SY","SZ"};
+        for(int i=0;i<9;i++){int row=i/3,col=i%3; var l=Label(names[i],12+col*72,frame.Height-76-row*38,24,22);AddSubview(l);var f=new NSTextField(new CGRect(34+col*72,frame.Height-78-row*38,48,24)){StringValue="0"};int idx=i;f.EditingEnded+=(_,_)=>Apply(idx);_fields[i]=f;AddSubview(f);} _selection.Changed+=Refresh;_world.Changed+=Refresh;Refresh();}
+    private NSTextField Label(string s,nfloat x,nfloat y,nfloat w,nfloat h)=>new(new CGRect(x,y,w,h)){StringValue=s,Editable=false,Bezeled=false,DrawsBackground=false,TextColor=NSColor.FromRgb(210,210,214)};
+    private void Refresh(){var e=_selection.ActiveEntity;if(e is null||!_world.Exists(e.Value)){_title.StringValue="Nothing selected";return;} var en=e.Value;_title.StringValue=_world.Has<NameComponent>(en)?_world.Get<NameComponent>(en).Name:$"Entity {en.Id}"; if(!_world.Has<TransformComponent>(en))return;var t=_world.Get<TransformComponent>(en);float[] v={t.Position.X,t.Position.Y,t.Position.Z,t.Rotation.X,t.Rotation.Y,t.Rotation.Z,t.Scale.X,t.Scale.Y,t.Scale.Z};for(int i=0;i<9;i++)_fields[i].StringValue=v[i].ToString("0.###",CultureInfo.InvariantCulture);}
+    private void Apply(int index){var e=_selection.ActiveEntity;if(e is null||!_world.Has<TransformComponent>(e.Value))return;if(!float.TryParse(_fields[index].StringValue,NumberStyles.Float,CultureInfo.InvariantCulture,out var x)){Refresh();return;}var old=_world.Get<TransformComponent>(e.Value);var t=old;if(index<3){var v=t.Position;if(index==0)v.X=x;else if(index==1)v.Y=x;else v.Z=x;t.Position=v;}else if(index<6){var v=t.Rotation;if(index==3)v.X=x;else if(index==4)v.Y=x;else v.Z=x;t.Rotation=v;}else{var v=t.Scale;if(index==6)v.X=x;else if(index==7)v.Y=x;else v.Z=x;t.Scale=v;}_commands.Execute(new SetTransformCommand(_world,e.Value,old,t));}
+}
