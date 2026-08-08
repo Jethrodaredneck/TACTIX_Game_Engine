@@ -4,6 +4,7 @@ using Metal;
 using TACTIX.Editor.UI.Docking;
 using TACTIX.Editor.UI.Panels;
 using TACTIX.Editor.UI.Viewport;
+using TACTIX.Editor.UI.Content;
 using TACTIX.Editor.AI;
 using TACTIX.Engine.AI;
 using TACTIX.Engine.Runtime.Scene;
@@ -43,14 +44,14 @@ public sealed class SceneEditorTool : EditorTool
         dockManager.RegisterPanel(new DockPanel("Scene.Hierarchy", "Hierarchy",
             () => new HierarchyPanelView(new CGRect(0,0,320,240), _scene, _selection, _commands, _assets)));
 
-        dockManager.RegisterPanel(new DockPanel("Scene.Viewport", "Viewport",
+        dockManager.RegisterPanel(new DockPanel("Scene.Viewport", "Scene",
             () => Viewport));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Inspector", "Inspector",
             () => new InspectorPanelView(new CGRect(0,0,320,240), _scene.World, _selection, _commands)));
 
-        dockManager.RegisterPanel(new DockPanel("Scene.Content", "Content Drawer",
-            () => Placeholder("Project assets")));
+        dockManager.RegisterPanel(new DockPanel("Scene.Content", "Project",
+            () => new ContentBrowserPanelView(new CGRect(0,0,720,240), _assets.ProjectRoot)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Console", "Console",
             () => Placeholder("Engine output")));
@@ -66,9 +67,9 @@ public sealed class SceneEditorTool : EditorTool
         var bottom = new TabDockNode("Scene.Bottom", new[] { "Scene.Content", "Scene.Console", "Scene.AIBridge" }, "Scene.Content");
         var inspector = new TabDockNode("Scene.Right", new[] { "Scene.Inspector" });
 
-        var center = new SplitDockNode("Scene.CenterVertical", vertical: false, ratio: 0.72, viewport, bottom);
-        var centerAndRight = new SplitDockNode("Scene.CenterRight", vertical: true, ratio: 0.78, center, inspector);
-        return new SplitDockNode("Scene.Root", vertical: true, ratio: 0.18, hierarchy, centerAndRight);
+        var center = new SplitDockNode("Scene.CenterVertical", vertical: false, ratio: 0.74, viewport, bottom);
+        var centerAndRight = new SplitDockNode("Scene.CenterRight", vertical: true, ratio: 0.76, center, inspector);
+        return new SplitDockNode("Scene.Root", vertical: true, ratio: 0.19, hierarchy, centerAndRight);
     }
 
     private static NSView Placeholder(string message)
