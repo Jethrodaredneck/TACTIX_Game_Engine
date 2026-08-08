@@ -1,3 +1,4 @@
+using System.Numerics;
 using TACTIX.Editor.Scene;
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Formats;
@@ -8,6 +9,11 @@ namespace TACTIX.Editor.Terrain;
 /// <summary>
 /// Creates both the project-owned TerrainAsset and the scene entity that references it.
 /// Undo removes the entity and the asset file; redo recreates both with the same identities.
+///
+/// Until the dedicated heightfield Metal buffer path lands, the entity also carries a
+/// Plane MeshRendererComponent scaled to the TerrainAsset footprint. This is deliberately
+/// a temporary render bridge: terrain identity/data remains owned by TerrainComponent +
+/// TerrainAsset, so the preview renderer can be removed without changing scene semantics.
 /// </summary>
 public sealed class CreateTerrainCommand : IEditorCommand
 {
@@ -45,8 +51,15 @@ public sealed class CreateTerrainCommand : IEditorCommand
         _terrain = _terrain with { Guid = meta.Guid };
 
         _world.Add(entity, new NameComponent(_name));
-        _world.Add(entity, TransformComponent.Identity);
+
+        var transform = TransformComponent.Identity;
+        // BuiltInMesh.Plane spans -1..1, so half-extents map the preview surface
+        // exactly to the TerrainAsset physical footprint.
+        transform.Scale = new Vector3(_terrain.SizeX * 0.5f, 1f, _terrain.SizeZ * 0.5f);
+        _world.Add(entity, transform);
+
         _world.Add(entity, new TerrainComponent(meta.Guid));
+        _world.Add(entity, new MeshRendererComponent(BuiltInMesh.Plane, "TACTIX_TerrainPreview"));
         _selection.Select(entity);
     }
 
