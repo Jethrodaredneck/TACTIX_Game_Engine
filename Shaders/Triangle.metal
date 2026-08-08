@@ -9,7 +9,11 @@ struct Uniforms
     float rx; float ry; float rz;
     float sx; float sy; float sz;
     float selected;
-    float padding;
+    float camPX; float camPY; float camPZ;
+    float camRX; float camRY; float camRZ;
+    float camUX; float camUY; float camUZ;
+    float camFX; float camFY; float camFZ;
+    float projectionScale;
 };
 struct VSOut { float4 position [[position]]; float2 uv; float shade; float selected; };
 
@@ -24,11 +28,15 @@ vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
     p=float3(cz*p.x-sz*p.y, sz*p.x+cz*p.y, p.z);
     p += float3(u.px,u.py,u.pz);
 
-    float viewZ = p.z + 7.0;
-    float f = 1.7;
+    float3 rel = p - float3(u.camPX,u.camPY,u.camPZ);
+    float viewX = dot(rel,float3(u.camRX,u.camRY,u.camRZ));
+    float viewY = dot(rel,float3(u.camUX,u.camUY,u.camUZ));
+    float viewZ = dot(rel,float3(u.camFX,u.camFY,u.camFZ));
     float safeAspect=max(u.aspect,0.01);
+    float f=max(u.projectionScale,0.01);
+
     VSOut o;
-    o.position=float4(p.x*f/safeAspect, p.y*f, viewZ-0.15, viewZ);
+    o.position=float4(viewX*f/safeAspect, viewY*f, viewZ-0.15, viewZ);
     o.uv=in.uv;
     o.shade=clamp(1.08-p.z*0.035,0.74,1.0);
     o.selected=u.selected;
