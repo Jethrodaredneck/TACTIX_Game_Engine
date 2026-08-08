@@ -9,7 +9,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using TACTIX.Engine.Core.Logging;
 using TACTIX.Engine.Runtime.ECS;
-using TACTIX.Editor.Scene;
+using System.Numerics;
 
 namespace TACTIX.Engine.Rendering.Metal;
 
@@ -26,7 +26,12 @@ public sealed class MetalRenderer : IDisposable
     private IMTLTexture _logoTexture;
     private IMTLSamplerState _sampler;
     private World? _world;
-    private EditorSelection? _selection;
+    private int _selectedEntityId;
+    private Vector3 _cameraPosition = new(0, -0.97f, -6.93f);
+    private Vector3 _cameraRight = Vector3.UnitX;
+    private Vector3 _cameraUp = new(0, 0.99f, -0.14f);
+    private Vector3 _cameraForward = new(0, 0.14f, 0.99f);
+    private float _projectionScale = 1.7f;
     private int _drawCount;
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -37,7 +42,11 @@ public sealed class MetalRenderer : IDisposable
         public float RX,RY,RZ;
         public float SX,SY,SZ;
         public float Selected;
-        public float Padding;
+        public float CamPX,CamPY,CamPZ;
+        public float CamRX,CamRY,CamRZ;
+        public float CamUX,CamUY,CamUZ;
+        public float CamFX,CamFY,CamFZ;
+        public float ProjectionScale;
     }
 
     public MetalRenderer(IMTLDevice device, CAMetalLayer layer, string shaderSource)
@@ -50,7 +59,17 @@ public sealed class MetalRenderer : IDisposable
         BuildPrimitiveMeshes();
     }
 
-    public void BindScene(World world, EditorSelection selection){_world=world;_selection=selection;}
+    public void BindScene(World world) => _world = world;
+
+    public void SetEditorView(Vector3 position, Vector3 right, Vector3 up, Vector3 forward, float projectionScale, Entity? selectedEntity)
+    {
+        _cameraPosition = position;
+        _cameraRight = right;
+        _cameraUp = up;
+        _cameraForward = forward;
+        _projectionScale = projectionScale;
+        _selectedEntityId = selectedEntity?.Id ?? 0;
+    }
 
     private IMTLLibrary CompileLibrary(string src){NSError? e;var l=_device.CreateLibrary(src,new MTLCompileOptions(),out e);if(e!=null)throw new InvalidOperationException(e.LocalizedDescription);return l;}
 
@@ -135,7 +154,7 @@ public sealed class MetalRenderer : IDisposable
             foreach(var (entity,mr) in _world.Query<MeshRendererComponent>())
             {
                 if(!_world.Has<TransformComponent>(entity)||!_meshes.TryGetValue(mr.Mesh,out var mesh))continue;
-                var t=_world.Get<TransformComponent>(entity);var u=new Uniforms{Aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height)),PX=t.Position.X,PY=t.Position.Y,PZ=t.Position.Z,RX=t.Rotation.X,RY=t.Rotation.Y,RZ=t.Rotation.Z,SX=t.Scale.X,SY=t.Scale.Y,SZ=t.Scale.Z,Selected=_selection?.ActiveEntity==entity?1:0};
+                var t=_world.Get<TransformComponent>(entity);var u=new Uniforms{Aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height)),PX=t.Position.X,PY=t.Position.Y,PZ=t.Position.Z,RX=t.Rotation.X,RY=t.Rotation.Y,RZ=t.Rotation.Z,SX=t.Scale.X,SY=t.Scale.Y,SZ=t.Scale.Z,Selected=_selectedEntityId==entity.Id?1:0,CamPX=_cameraPosition.X,CamPY=_cameraPosition.Y,CamPZ=_cameraPosition.Z,CamRX=_cameraRight.X,CamRY=_cameraRight.Y,CamRZ=_cameraRight.Z,CamUX=_cameraUp.X,CamUY=_cameraUp.Y,CamUZ=_cameraUp.Z,CamFX=_cameraForward.X,CamFY=_cameraForward.Y,CamFZ=_cameraForward.Z,ProjectionScale=_projectionScale};
                 Marshal.StructureToPtr(u,_uniformBuffer.Contents,false);enc.SetVertexBuffer(mesh.Buffer,0,0);enc.SetVertexBuffer(_uniformBuffer,0,1);enc.DrawPrimitives(MTLPrimitiveType.Triangle,0,(nuint)mesh.VertexCount);
             }
         }
