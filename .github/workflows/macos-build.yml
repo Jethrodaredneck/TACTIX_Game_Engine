@@ -75,7 +75,7 @@ jobs:
         if: steps.source.outputs.present == 'true'
         run: dotnet publish TACTIX.csproj -c Release -f net9.0-macos15.0 -r osx-arm64 --no-restore -p:CreatePackage=false
 
-      - name: Locate app bundle
+      - name: Verify and ad-hoc sign app bundle
         if: steps.source.outputs.present == 'true'
         shell: bash
         run: |
@@ -84,7 +84,17 @@ jobs:
             echo "TACTIX.app was not produced."
             exit 1
           fi
-          echo "Built app: $APP_PATH"
+
+          test -x "$APP_PATH/Contents/MacOS/TACTIX"
+          test -f "$APP_PATH/Contents/Resources/Shaders/Triangle.metal"
+          test -f "$APP_PATH/Contents/Resources/Shaders/default.metallib"
+          test -f "$APP_PATH/Contents/Resources/Assets/Branding/TACTIX_EngineLogo.jpg"
+
+          file "$APP_PATH/Contents/MacOS/TACTIX"
+          xcrun codesign --force --deep --sign - "$APP_PATH"
+          xcrun codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          plutil -lint "$APP_PATH/Contents/Info.plist"
+          echo "Built and verified app: $APP_PATH"
 
       - name: Upload build logs and Metal output
         if: always() && steps.source.outputs.present == 'true'
