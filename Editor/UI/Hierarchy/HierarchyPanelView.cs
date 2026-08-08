@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using TACTIX.Editor.Scene;
 using TACTIX.Editor.Terrain;
+using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Runtime.ECS;
 using TACTIX.Engine.Runtime.Scene;
 using TactixScene = TACTIX.Engine.Runtime.Scene.Scene;
@@ -14,14 +15,14 @@ public sealed class HierarchyPanelView : NSView
     private readonly World _world;
     private readonly EditorSelection _selection;
     private readonly EditorCommandStack _commands;
-    private readonly string _projectRoot;
+    private readonly AssetDatabase _assets;
     private readonly string _scenePath;
     private readonly NSStackView _stack;
 
-    public HierarchyPanelView(CGRect frame, TactixScene scene, EditorSelection selection, EditorCommandStack commands, string projectRoot):base(frame)
+    public HierarchyPanelView(CGRect frame, TactixScene scene, EditorSelection selection, EditorCommandStack commands, AssetDatabase assets):base(frame)
     {
-        _scene=scene; _world=scene.World; _selection=selection; _commands=commands; _projectRoot=projectRoot;
-        _scenePath=Path.Combine(projectRoot,"Assets","Scenes","Main.tactixscene");
+        _scene=scene; _world=scene.World; _selection=selection; _commands=commands; _assets=assets;
+        _scenePath=Path.Combine(assets.ProjectRoot,"Assets","Scenes","Main.tactixscene");
         WantsLayer=true;Layer!.BackgroundColor=NSColor.FromRgb(25,25,28).CGColor;
 
         var primitives=new NSStackView(new CGRect(8,frame.Height-38,(nfloat)Math.Max(100.0,(double)frame.Width-16.0),30))
@@ -56,7 +57,7 @@ public sealed class HierarchyPanelView : NSView
     }
 
     private void Create(BuiltInMesh mesh,string name)=>_commands.Execute(new CreatePrimitiveCommand(_world,_selection,mesh,name));
-    private void CreateTerrain()=>_commands.Execute(new CreateTerrainCommand(_world,_selection,_projectRoot));
+    private void CreateTerrain()=>_commands.Execute(new CreateTerrainCommand(_world,_selection,_assets));
     private void CreateLight(LightType type)=>_commands.Execute(new CreateLightCommand(_world,_selection,type));
     private void Duplicate(){var e=_selection.ActiveEntity;if(e.HasValue&&_world.Exists(e.Value))_commands.Execute(new DuplicateEntityCommand(_world,_selection,e.Value));}
     private void Delete(){var e=_selection.ActiveEntity;if(e.HasValue&&_world.Exists(e.Value))_commands.Execute(new DeleteEntityCommand(_world,_selection,e.Value));}
