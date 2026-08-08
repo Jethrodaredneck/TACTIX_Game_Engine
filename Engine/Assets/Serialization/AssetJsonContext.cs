@@ -12,6 +12,8 @@ namespace TACTIX.Engine.Assets.Serialization;
 [JsonSerializable(typeof(AssetGuid))]
 [JsonSerializable(typeof(MeshAsset))]
 [JsonSerializable(typeof(MaterialAsset))]
+[JsonSerializable(typeof(TerrainAsset))]
+[JsonSerializable(typeof(TerrainLayer[]))]
 internal partial class AssetJsonContext : JsonSerializerContext
 {
 }
