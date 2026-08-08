@@ -1,5 +1,3 @@
-
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,6 +16,7 @@ using TACTIX.Engine.Runtime.Scene;
 using TACTIX.Engine.AI;
 using TACTIX.Engine.Runtime.ECS;
 using TACTIX.Editor.Scene;
+using TACTIX.Engine.Assets.Database;
 
 namespace TACTIX.Engine.Core.Application;
 
@@ -32,6 +31,7 @@ public sealed class TactixApplication
     private MetalRenderer? _renderer;
     private NSTimer? _timer;
     private AIBridgeServer? _aiBridge;
+    private AssetDatabase? _assetDatabase;
 
     private readonly SceneManager _sceneManager = new();
     private readonly EditorSelection _selection = new();
@@ -52,9 +52,6 @@ public sealed class TactixApplication
         _window = new TactixWindow(frame, "TACTIX", _input);
         Trace("C: window created");
 
-        // Build the editor shell around the existing Metal viewport. The renderer
-        // stays unchanged; only the view hierarchy changes so editor panels can dock
-        // around it.
         var host = _window.ContentView;
         if (host == null)
         {
@@ -71,6 +68,9 @@ public sealed class TactixApplication
         try
         {
             var projectRoot = FindProjectRoot();
+            _assetDatabase = new AssetDatabase(projectRoot);
+            _assetDatabase.Initialize();
+
             var scene = new Scene("Main");
             var cube = scene.World.CreateEntity();
             scene.World.Add(cube, new NameComponent("TACTIX Cube"));
@@ -81,6 +81,7 @@ public sealed class TactixApplication
             scene.World.Add(cube, new MeshRendererComponent(BuiltInMesh.Cube));
             _sceneManager.Load(scene);
             _selection.Select(cube);
+
             _aiBridge = new AIBridgeServer(projectRoot, () => new
             {
                 engine = "TACTIX",
@@ -91,7 +92,7 @@ public sealed class TactixApplication
             _aiBridge.Start();
             Trace($"C3: AI Bridge started at {_aiBridge.BaseUrl}");
 
-            _dockHost = new DockHostView(bounds, device, _aiBridge, scene, _selection, _commands, projectRoot)
+            _dockHost = new DockHostView(bounds, device, _aiBridge, scene, _selection, _commands, _assetDatabase)
             {
                 AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable
             };
@@ -125,8 +126,9 @@ public sealed class TactixApplication
         {
             _renderer = new MetalRenderer(device, _view!.MetalLayer, shaderSource);
             _renderer.BindScene(_sceneManager.ActiveScene!.World);
+            _renderer.BindAssets(_assetDatabase!);
             _dockHost!.Viewport.AttachRenderer(_renderer);
-            Trace("G: renderer created + scene bound");
+            Trace("G: renderer created + scene/assets bound");
 
             _view.SetRenderer(_renderer);
             Trace("H: renderer attached to view");
@@ -158,6 +160,7 @@ public sealed class TactixApplication
 
         _renderer?.Dispose();
         _renderer = null;
+        _assetDatabase = null;
 
         Log.Info("Stopped.");
     }
@@ -187,7 +190,6 @@ public sealed class TactixApplication
             }
         }
 
-        // Published app should still have a writable container-local fallback.
         return Directory.GetCurrentDirectory();
     }
 
@@ -197,15 +199,11 @@ public sealed class TactixApplication
         {
             File.AppendAllText("/tmp/tactix_boottrace.txt", msg + "\n");
         }
-        catch
-        {
-            // swallow
-        }
+        catch { }
     }
 
     private static string LoadShaderSource(string fileName)
     {
-        // Prefer app bundle Resources/Shaders (publish output).
         var candidates = new List<string>();
 
         try
@@ -217,12 +215,8 @@ public sealed class TactixApplication
                 candidates.Add(Path.Combine(res!, fileName));
             }
         }
-        catch
-        {
-            // ignore
-        }
+        catch { }
 
-        // Fallbacks for running from output folders.
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "Shaders", fileName));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, fileName));
 
