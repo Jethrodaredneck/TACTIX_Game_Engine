@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using TACTIX.Engine.Assets.Database;
 
 namespace TACTIX.Engine.Assets.Importing;
 
@@ -35,7 +36,7 @@ public sealed class PlannedInterchangeImporter : IAssetImporter
         Extensions = extensions;
     }
 
-    public AssetImportResult Import(Database.AssetDatabase database, AssetImportRequest request)
+    public AssetImportResult Import(AssetDatabase database, AssetImportRequest request)
         => AssetImportResult.NotImplemented(Id, $"{Id} recognizes {Path.GetExtension(request.SourcePath)}; parser integration is the next importer stage.");
 }
 
