@@ -5,6 +5,7 @@ using TACTIX.Editor.UI.Docking;
 using TACTIX.Editor.UI.Panels;
 using TACTIX.Editor.UI.Viewport;
 using TACTIX.Editor.UI.Content;
+using TACTIX.Editor.UI.Console;
 using TACTIX.Editor.AI;
 using TACTIX.Engine.AI;
 using TACTIX.Engine.Runtime.Scene;
@@ -54,7 +55,7 @@ public sealed class SceneEditorTool : EditorTool
             () => new ContentBrowserPanelView(new CGRect(0,0,720,240), _assets.ProjectRoot)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Console", "Console",
-            () => Placeholder("Engine output")));
+            () => new ConsolePanelView(new CGRect(0,0,720,240))));
 
         dockManager.RegisterPanel(new DockPanel("Scene.AIBridge", "AI Bridge",
             () => new AIBridgePanelView(new CGRect(0, 0, 520, 260), _aiBridge)));
