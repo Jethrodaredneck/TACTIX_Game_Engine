@@ -1,5 +1,6 @@
 name: macOS / Metal Build
 
+# CI trigger refresh for authoritative TACTIX 0.3 baseline.
 on:
   push:
     branches: [main]
