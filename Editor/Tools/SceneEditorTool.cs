@@ -35,7 +35,7 @@ public sealed class SceneEditorTool : EditorTool
         _device = device;
         _aiBridge = aiBridge;
         _scene = scene; _selection = selection; _commands = commands; _projectRoot = projectRoot;
-        Viewport = new ViewportPanelView(new CGRect(0, 0, 640, 360), _device);
+        Viewport = new ViewportPanelView(new CGRect(0, 0, 640, 360), _device, _scene.World, _selection, _commands);
     }
 
     public override void RegisterPanels(DockManager dockManager)
