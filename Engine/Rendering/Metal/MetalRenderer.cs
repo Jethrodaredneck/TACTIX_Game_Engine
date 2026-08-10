@@ -64,6 +64,8 @@ public sealed class MetalRenderer : IDisposable
         public float CamFX, CamFY, CamFZ;
         public float ProjectionScale;
 
+        public float BaseR, BaseG, BaseB, BaseA;
+
         public float DirDX, DirDY, DirDZ;
         public float DirR, DirG, DirB;
         public float DirIntensity;
@@ -445,7 +447,28 @@ public sealed class MetalRenderer : IDisposable
         finally { handle.Free(); }
     }
 
-    private Uniforms MakeUniforms(TransformComponent t, bool selected, float aspect, DirectionalLightData dir, LocalLightData local)
+    private Vector4 ResolveBaseColor(MeshRendererComponent meshRenderer)
+    {
+        if (_assets != null && meshRenderer.UsesAssetMaterial)
+        {
+            try
+            {
+                var material = _assets.LoadMaterial(meshRenderer.MaterialAssetGuid);
+                return new Vector4(
+                    Math.Clamp(material.BaseColorR, 0f, 1f),
+                    Math.Clamp(material.BaseColorG, 0f, 1f),
+                    Math.Clamp(material.BaseColorB, 0f, 1f),
+                    1f);
+            }
+            catch
+            {
+                // Missing/bad material should not make the mesh disappear.
+            }
+        }
+        return new Vector4(0.68f, 0.69f, 0.72f, 1f);
+    }
+
+    private Uniforms MakeUniforms(TransformComponent t, bool selected, float aspect, DirectionalLightData dir, LocalLightData local, Vector4 baseColor)
     {
         return new Uniforms
         {
@@ -459,6 +482,7 @@ public sealed class MetalRenderer : IDisposable
             CamUX=_cameraUp.X,CamUY=_cameraUp.Y,CamUZ=_cameraUp.Z,
             CamFX=_cameraForward.X,CamFY=_cameraForward.Y,CamFZ=_cameraForward.Z,
             ProjectionScale=_projectionScale,
+            BaseR=baseColor.X,BaseG=baseColor.Y,BaseB=baseColor.Z,BaseA=baseColor.W,
             DirDX=dir.Direction.X,DirDY=dir.Direction.Y,DirDZ=dir.Direction.Z,
             DirR=dir.Color.X,DirG=dir.Color.Y,DirB=dir.Color.Z,DirIntensity=dir.Intensity,Ambient=.18f,
             LocalType=local.Type,
@@ -483,7 +507,7 @@ public sealed class MetalRenderer : IDisposable
     public void Draw()
     {
         using var pool=new NSAutoreleasePool();
-        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: lit primitives + terrain + imported mesh path running");
+        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: lit primitives + terrain + imported mesh/material path running");
         var drawable=_layer.NextDrawable(); if(drawable==null) return;
         var tex=drawable.Texture;
         var depthDesc=MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.Depth32Float,tex.Width,tex.Height,false);
@@ -511,15 +535,23 @@ public sealed class MetalRenderer : IDisposable
             {
                 if(!_world.Has<TransformComponent>(entity)) continue;
                 var t=_world.Get<TransformComponent>(entity);
+                var baseColor=ResolveBaseColor(mr);
                 if (mr.UsesAssetMesh)
                 {
                     var imported = GetAssetMeshGpu(mr.MeshAssetGuid);
                     if (imported != null)
-                        DrawMesh(enc, imported.Buffer, imported.VertexCount, MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                    {
+                        // Imported authoring meshes may contain intentionally double-sided
+                        // surfaces or inconsistent source winding. Depth writes stay enabled,
+                        // so disabling culling here makes them opaque instead of holey/inside-out.
+                        enc.SetCullMode(MTLCullMode.None);
+                        DrawMesh(enc, imported.Buffer, imported.VertexCount, MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,baseColor),frameUniformBuffers);
+                        enc.SetCullMode(MTLCullMode.Back);
+                    }
                 }
                 else if(_meshes.TryGetValue(mr.Mesh,out var mesh))
                 {
-                    DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                    DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,baseColor),frameUniformBuffers);
                 }
             }
 
@@ -529,7 +561,7 @@ public sealed class MetalRenderer : IDisposable
                 var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);
                 if(gpu==null) continue;
                 var t=_world.Get<TransformComponent>(entity);
-                DrawMesh(enc,gpu.Buffer,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                DrawMesh(enc,gpu.Buffer,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,new Vector4(.48f,.52f,.43f,1f)),frameUniformBuffers);
             }
         }
 
