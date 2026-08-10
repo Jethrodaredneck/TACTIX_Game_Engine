@@ -9,7 +9,7 @@ public static class SceneSerializer
 {
     private sealed class SceneFile
     {
-        public int Version { get; set; } = 3;
+        public int Version { get; set; } = 4;
         public string Name { get; set; } = "Main";
         public List<EntityFile> Entities { get; set; } = new();
     }
@@ -22,6 +22,7 @@ public static class SceneSerializer
         public float[] Rotation { get; set; } = [0,0,0];
         public float[] Scale { get; set; } = [1,1,1];
         public BuiltInMesh? Mesh { get; set; }
+        public string MeshAssetGuid { get; set; } = "";
         public string Material { get; set; } = "TACTIX_DefaultPrimitive";
         public string TerrainAssetGuid { get; set; } = "";
         public LightFile? Light { get; set; }
@@ -56,7 +57,8 @@ public static class SceneSerializer
             if (scene.World.Has<MeshRendererComponent>(entity))
             {
                 var mesh = scene.World.Get<MeshRendererComponent>(entity);
-                entry.Mesh = mesh.Mesh;
+                if (mesh.UsesAssetMesh) entry.MeshAssetGuid = mesh.MeshAssetGuid.ToString();
+                else entry.Mesh = mesh.Mesh;
                 entry.Material = mesh.Material;
             }
             if (scene.World.Has<TerrainComponent>(entity))
@@ -97,7 +99,10 @@ public static class SceneSerializer
             if (entry.Rotation.Length >= 3) transform.Rotation = new Vector3(entry.Rotation[0],entry.Rotation[1],entry.Rotation[2]);
             if (entry.Scale.Length >= 3) transform.Scale = new Vector3(entry.Scale[0],entry.Scale[1],entry.Scale[2]);
             scene.World.Add(entity, transform);
-            if (entry.Mesh.HasValue) scene.World.Add(entity, new MeshRendererComponent(entry.Mesh.Value, entry.Material));
+            if (!string.IsNullOrWhiteSpace(entry.MeshAssetGuid) && AssetGuid.TryParse(entry.MeshAssetGuid, out var meshGuid))
+                scene.World.Add(entity, new MeshRendererComponent(meshGuid, entry.Material));
+            else if (entry.Mesh.HasValue)
+                scene.World.Add(entity, new MeshRendererComponent(entry.Mesh.Value, entry.Material));
             if (!string.IsNullOrWhiteSpace(entry.TerrainAssetGuid) && AssetGuid.TryParse(entry.TerrainAssetGuid, out var terrainGuid))
                 scene.World.Add(entity, new TerrainComponent(terrainGuid));
             if (entry.Light != null)
