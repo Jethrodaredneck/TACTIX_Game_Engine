@@ -1,4 +1,5 @@
 using System.Numerics;
+using TACTIX.Engine.Assets.Database;
 
 namespace TACTIX.Engine.Runtime.ECS;
 
@@ -27,7 +28,21 @@ public enum BuiltInMesh { Cube, Plane, Sphere, Cylinder, Capsule, Cone }
 public struct MeshRendererComponent
 {
     public BuiltInMesh Mesh;
+    public AssetGuid MeshAssetGuid;
     public string Material;
+    public bool UsesAssetMesh => MeshAssetGuid.Value != Guid.Empty;
+
     public MeshRendererComponent(BuiltInMesh mesh, string material = "TACTIX_DefaultPrimitive")
-    { Mesh = mesh; Material = material; }
+    {
+        Mesh = mesh;
+        MeshAssetGuid = default;
+        Material = material;
+    }
+
+    public MeshRendererComponent(AssetGuid meshAssetGuid, string material = "TACTIX_DefaultPrimitive")
+    {
+        Mesh = BuiltInMesh.Cube;
+        MeshAssetGuid = meshAssetGuid;
+        Material = material;
+    }
 }
