@@ -274,13 +274,14 @@ public sealed class ContentBrowserPanelView : NSView
         try
         {
             var assetFile = JsonAssetSerializer.Load(file);
-            if (assetFile.Meta.Type != AssetType.Mesh) return null;
+            if (assetFile.Meta.Type != AssetType.Mesh || assetFile.Mesh == null) return null;
             var guid = assetFile.Meta.Guid;
             var name = assetFile.Meta.Name;
+            var materialGuid = assetFile.Mesh.Value.DefaultMaterialGuid;
             return () =>
             {
-                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name));
-                _status.StringValue = $"Added {name} to Scene";
+                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name, materialGuid));
+                _status.StringValue = materialGuid.HasValue ? $"Added {name} to Scene with imported material" : $"Added {name} to Scene";
             };
         }
         catch { return null; }
@@ -305,7 +306,7 @@ public sealed class ContentBrowserPanelView : NSView
         panel.Prompt = "Import";
         panel.Message = blenderOnly
             ? "Choose a .blend file. TACTIX will launch Blender in the background, convert it to GLB, then create a TACTIX model asset."
-            : "Choose a supported source file. OBJ files become native TACTIX meshes that can be added directly to the Scene.";
+            : "Choose a supported source file. OBJ files become native TACTIX meshes; referenced MTL files are imported automatically.";
         panel.CanChooseFiles = true;
         panel.CanChooseDirectories = false;
         panel.AllowsMultipleSelection = !blenderOnly;
