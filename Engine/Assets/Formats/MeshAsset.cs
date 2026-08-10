@@ -11,9 +11,12 @@ public readonly record struct MeshAsset(
     uint[]? Indices
 )
 {
+    // Import-time default material. This is intentionally only a default binding;
+    // runtime/editor entities remain free to override it through MeshRendererComponent.
+    public AssetGuid? DefaultMaterialGuid { get; init; }
+
     public static MeshAsset CreateTriangle()
     {
-        // 3 verts, xyz
         var pos = new float[]
         {
             0.0f,  0.6f, 0.0f,
