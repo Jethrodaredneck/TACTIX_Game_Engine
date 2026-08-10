@@ -17,6 +17,7 @@ public sealed class AssetImportPipeline
         registry.Register(new ObjMeshImporter());
         registry.Register(new MtlMaterialImporter());
         registry.Register(new TextureAssetImporter());
+        registry.Register(new GlbNativeMeshImporter());
         return new AssetImportPipeline(registry);
     }
 
