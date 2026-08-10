@@ -31,7 +31,10 @@ public sealed class AssetImporterRegistry
     public IAssetImporter? ResolveImporter(string path)
     {
         var extension = NormalizeExtension(Path.GetExtension(path));
-        return _importers.FirstOrDefault(importer => importer.Extensions.Any(e => NormalizeExtension(e) == extension));
+        return _importers
+            .Where(importer => importer.Extensions.Any(e => NormalizeExtension(e) == extension))
+            .OrderBy(importer => importer.Capability == AssetImportCapability.Native ? 0 : importer.Capability == AssetImportCapability.ExternalTool ? 1 : 2)
+            .FirstOrDefault();
     }
 
     public ISourceAssetConverter? ResolveConverter(string path)
