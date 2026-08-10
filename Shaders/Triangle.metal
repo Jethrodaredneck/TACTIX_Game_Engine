@@ -21,6 +21,8 @@ struct Uniforms
     float camFX; float camFY; float camFZ;
     float projectionScale;
 
+    float baseR; float baseG; float baseB; float baseA;
+
     float dirDX; float dirDY; float dirDZ;
     float dirR; float dirG; float dirB;
     float dirIntensity;
@@ -84,10 +86,13 @@ vertex VSOut vs_main(VSIn in [[stage_in]], constant Uniforms& u [[buffer(1)]])
 
 fragment float4 ps_main(VSOut in [[stage_in]], texture2d<float> logo [[texture(0)]], sampler samp [[sampler(0)]], constant Uniforms& u [[buffer(1)]])
 {
+    // Keep a very small branding variation on default surfaces while using the native
+    // material base color supplied by the renderer. Imported material opacity is not
+    // enabled until the renderer has explicit alpha modes/sorting; geometry stays opaque.
     float3 tex = logo.sample(samp,in.uv).rgb;
     float lum = dot(tex,float3(0.299,0.587,0.114));
-    float ghost = (lum - 0.5) * 0.10;
-    float3 albedo = float3(0.68,0.69,0.72) + ghost;
+    float ghost = (lum - 0.5) * 0.035;
+    float3 albedo = clamp(float3(u.baseR,u.baseG,u.baseB) + ghost, 0.0, 1.0);
     float3 N=normalize(in.worldNormal);
 
     float3 dirL=normalize(-float3(u.dirDX,u.dirDY,u.dirDZ));
