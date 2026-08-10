@@ -10,5 +10,6 @@ public enum AssetType
     Animation = 5,
     Skeleton = 6,
     Audio = 7,
-    Font = 8
+    Font = 8,
+    Model = 9
 }

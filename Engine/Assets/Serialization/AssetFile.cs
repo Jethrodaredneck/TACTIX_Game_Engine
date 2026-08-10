@@ -11,6 +11,7 @@ public sealed class AssetFile
     public MeshAsset? Mesh { get; init; }
     public MaterialAsset? Material { get; init; }
     public TerrainAsset? Terrain { get; init; }
+    public ModelAsset? Model { get; init; }
 
     public static AssetFile ForMesh(AssetMeta meta, MeshAsset mesh)
         => new() { Meta = meta, Mesh = mesh, Material = null, Terrain = null };
@@ -19,5 +20,8 @@ public sealed class AssetFile
         => new() { Meta = meta, Mesh = null, Material = material, Terrain = null };
 
     public static AssetFile ForTerrain(AssetMeta meta, TerrainAsset terrain)
-        => new() { Meta = meta, Mesh = null, Material = null, Terrain = terrain };
+        => new() { Meta = meta, Mesh = null, Material = null, Terrain = terrain, Model = null };
+
+    public static AssetFile ForModel(AssetMeta meta, ModelAsset model)
+        => new() { Meta = meta, Mesh = null, Material = null, Terrain = null, Model = model };
 }

@@ -114,6 +114,42 @@ public sealed class AssetDatabase
         return meta;
     }
 
+    public AssetMeta SaveModel(
+        string projectPath,
+        ModelAsset model,
+        string name = "",
+        string sourcePath = "",
+        string sourceHash = "",
+        string importerId = "",
+        int importerVersion = 0,
+        string importSettingsHash = "")
+    {
+        var full = ResolveProjectPath(projectPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var guid = model.Guid.Value == Guid.Empty ? AssetGuid.New() : model.Guid;
+        model = model with { Guid = guid };
+
+        var meta = new AssetMeta
+        {
+            Guid = guid,
+            Type = AssetType.Model,
+            ProjectPath = NormalizeProjectPath(projectPath),
+            Name = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(projectPath) : name,
+            ContentHash = ComputeHash(model),
+            SourcePath = sourcePath,
+            SourceHash = sourceHash,
+            ImporterId = importerId,
+            ImporterVersion = importerVersion,
+            ImportSettingsHash = importSettingsHash,
+            ImportedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        JsonAssetSerializer.Save(full, AssetFile.ForModel(meta, model));
+        Registry.Upsert(meta);
+        return meta;
+    }
+
     public MeshAsset LoadMesh(AssetGuid guid)
     {
         if (!Registry.TryGet(guid, out var meta))
@@ -154,6 +190,20 @@ public sealed class AssetDatabase
         var file = JsonAssetSerializer.Load(full);
         if (file.Terrain == null) throw new InvalidDataException("Terrain payload missing.");
         return file.Terrain.Value;
+    }
+
+    public ModelAsset LoadModel(AssetGuid guid)
+    {
+        if (!Registry.TryGet(guid, out var meta))
+            throw new FileNotFoundException($"Asset not registered: {guid}");
+
+        if (meta.Type != AssetType.Model)
+            throw new InvalidOperationException($"Asset {guid} is {meta.Type}, not Model.");
+
+        var full = ResolveProjectPath(meta.ProjectPath);
+        var file = JsonAssetSerializer.Load(full);
+        if (file.Model == null) throw new InvalidDataException("Model payload missing.");
+        return file.Model.Value;
     }
 
     public string ResolveProjectPath(string projectPath)
@@ -228,5 +278,21 @@ public sealed class AssetDatabase
 
         sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
         return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+    }
+
+    private static string ComputeHash(ModelAsset model)
+    {
+        using var sha = SHA256.Create();
+        var s = string.Join("|",
+            model.InterchangeProjectPath,
+            model.ImportMetadataProjectPath,
+            model.SourcePath,
+            model.SourceHash,
+            model.InterchangeHash,
+            model.InterchangeFormat,
+            model.ObjectCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var bytes = Encoding.UTF8.GetBytes(s);
+        var hash = sha.ComputeHash(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
