@@ -16,6 +16,7 @@ public sealed class AssetImportPipeline
         var registry = BuiltInImporters.CreateDefault();
         registry.Register(new ObjMeshImporter());
         registry.Register(new MtlMaterialImporter());
+        registry.Register(new TextureAssetImporter());
         return new AssetImportPipeline(registry);
     }
 
