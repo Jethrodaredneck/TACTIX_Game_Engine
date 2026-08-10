@@ -34,6 +34,10 @@ public sealed class AssetImporterRegistry
         return _importers
             .Where(importer => importer.Extensions.Any(e => NormalizeExtension(e) == extension))
             .OrderBy(importer => importer.Capability == AssetImportCapability.Native ? 0 : importer.Capability == AssetImportCapability.ExternalTool ? 1 : 2)
+            // For equal capability, the most recently registered handler wins. This lets a
+            // new native importer replace a legacy/plumbing implementation without deleting
+            // the older fallback and also gives future plugin importers a clean override path.
+            .ThenByDescending(importer => _importers.IndexOf(importer))
             .FirstOrDefault();
     }
 
