@@ -1,4 +1,5 @@
 using System.Numerics;
+using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Runtime.ECS;
 
 namespace TACTIX.Editor.Scene;
@@ -47,10 +48,7 @@ public sealed class SetTransformCommand : IEditorCommand
 
     public SetTransformCommand(World world, Entity entity, TransformComponent before, TransformComponent after)
     {
-        _world = world;
-        _entity = entity;
-        _before = before;
-        _after = after;
+        _world = world; _entity = entity; _before = before; _after = after;
     }
 
     public void Execute() => _world.Set(_entity, _after);
@@ -66,10 +64,7 @@ public sealed class SetLightCommand : IEditorCommand
 
     public SetLightCommand(World world, Entity entity, LightComponent before, LightComponent after)
     {
-        _world = world;
-        _entity = entity;
-        _before = before;
-        _after = after;
+        _world = world; _entity = entity; _before = before; _after = after;
     }
 
     public void Execute() => _world.Set(_entity, _after);
@@ -86,10 +81,7 @@ public sealed class CreatePrimitiveCommand : IEditorCommand
 
     public CreatePrimitiveCommand(World world, EditorSelection selection, BuiltInMesh mesh, string name)
     {
-        _world = world;
-        _selection = selection;
-        _mesh = mesh;
-        _name = name;
+        _world = world; _selection = selection; _mesh = mesh; _name = name;
     }
 
     public void Execute()
@@ -112,6 +104,37 @@ public sealed class CreatePrimitiveCommand : IEditorCommand
     }
 }
 
+public sealed class CreateAssetMeshCommand : IEditorCommand
+{
+    private readonly World _world;
+    private readonly EditorSelection _selection;
+    private readonly AssetGuid _meshGuid;
+    private readonly string _name;
+    private int _entityId;
+
+    public CreateAssetMeshCommand(World world, EditorSelection selection, AssetGuid meshGuid, string name)
+    {
+        _world = world; _selection = selection; _meshGuid = meshGuid; _name = name;
+    }
+
+    public void Execute()
+    {
+        var entity = _entityId == 0 ? _world.CreateEntity() : _world.CreateEntityWithId(_entityId);
+        _entityId = entity.Id;
+        _world.Add(entity, new NameComponent(string.IsNullOrWhiteSpace(_name) ? "Imported Mesh" : _name));
+        _world.Add(entity, TransformComponent.Identity);
+        _world.Add(entity, new MeshRendererComponent(_meshGuid));
+        _selection.Select(entity);
+    }
+
+    public void Undo()
+    {
+        var entity = new Entity(_entityId);
+        _world.DestroyEntity(entity);
+        if (_selection.ActiveEntity == entity) _selection.Select(null);
+    }
+}
+
 public sealed class CreateLightCommand : IEditorCommand
 {
     private readonly World _world;
@@ -121,9 +144,7 @@ public sealed class CreateLightCommand : IEditorCommand
 
     public CreateLightCommand(World world, EditorSelection selection, LightType type)
     {
-        _world = world;
-        _selection = selection;
-        _type = type;
+        _world = world; _selection = selection; _type = type;
     }
 
     public void Execute()
@@ -139,10 +160,8 @@ public sealed class CreateLightCommand : IEditorCommand
         };
         _world.Add(entity, new NameComponent(name));
         var transform = TransformComponent.Identity;
-        if (_type == LightType.Directional)
-            transform.Rotation = new Vector3(50f, -30f, 0f);
-        else
-            transform.Position = new Vector3(0f, 3f, 0f);
+        if (_type == LightType.Directional) transform.Rotation = new Vector3(50f, -30f, 0f);
+        else transform.Position = new Vector3(0f, 3f, 0f);
         _world.Add(entity, transform);
         _world.Add(entity, new LightComponent(_type));
         _selection.Select(entity);
@@ -169,9 +188,7 @@ public sealed class DeleteEntityCommand : IEditorCommand
 
     public DeleteEntityCommand(World world, EditorSelection selection, Entity entity)
     {
-        _world = world;
-        _selection = selection;
-        _entity = entity;
+        _world = world; _selection = selection; _entity = entity;
     }
 
     public void Execute()
@@ -207,9 +224,7 @@ public sealed class DuplicateEntityCommand : IEditorCommand
 
     public DuplicateEntityCommand(World world, EditorSelection selection, Entity source)
     {
-        _world = world;
-        _selection = selection;
-        _source = source;
+        _world = world; _selection = selection; _source = source;
     }
 
     public void Execute()
@@ -227,13 +242,17 @@ public sealed class DuplicateEntityCommand : IEditorCommand
             var meshRadius = 1f;
             if (_world.Has<MeshRendererComponent>(_source))
             {
-                meshRadius = _world.Get<MeshRendererComponent>(_source).Mesh switch
+                var sourceMesh = _world.Get<MeshRendererComponent>(_source);
+                if (!sourceMesh.UsesAssetMesh)
                 {
-                    BuiltInMesh.Cube => 1.75f,
-                    BuiltInMesh.Plane => 1.45f,
-                    BuiltInMesh.Capsule => 1.9f,
-                    _ => 1.35f
-                };
+                    meshRadius = sourceMesh.Mesh switch
+                    {
+                        BuiltInMesh.Cube => 1.75f,
+                        BuiltInMesh.Plane => 1.45f,
+                        BuiltInMesh.Capsule => 1.9f,
+                        _ => 1.35f
+                    };
+                }
             }
             var separation = MathF.Max(1.5f, meshRadius * MathF.Max(extent, 0.1f) * 2.15f);
             transform.Position += new Vector3(separation, 0, 0);
