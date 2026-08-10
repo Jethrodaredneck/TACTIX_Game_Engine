@@ -378,12 +378,27 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
     private static string? ResolveBridgeScript()
     {
         var projectRoot = Environment.GetEnvironmentVariable("TACTIX_PROJECT_ROOT");
-        string[] candidates =
-        [
+        var candidates = new List<string>
+        {
             string.IsNullOrWhiteSpace(projectRoot) ? "" : Path.Combine(projectRoot, "Tools", "Blender", "exporttotactix.py"),
+            Path.Combine(AppContext.BaseDirectory, "..", "Resources", "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(AppContext.BaseDirectory, "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(Directory.GetCurrentDirectory(), "Tools", "Blender", "exporttotactix.py")
-        ];
+        };
+
+        foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            if (string.IsNullOrWhiteSpace(start))
+                continue;
+
+            var dir = new DirectoryInfo(start);
+            while (dir != null)
+            {
+                candidates.Add(Path.Combine(dir.FullName, "Tools", "Blender", "exporttotactix.py"));
+                dir = dir.Parent;
+            }
+        }
+
         return candidates.Where(path => !string.IsNullOrWhiteSpace(path)).FirstOrDefault(File.Exists);
     }
 }
