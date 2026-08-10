@@ -48,7 +48,7 @@ public sealed class SceneEditorTool : EditorTool
             () => Viewport));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Inspector", "Inspector",
-            () => new InspectorPanelView(new CGRect(0,0,320,240), _scene.World, _selection, _commands)));
+            () => new InspectorPanelView(new CGRect(0,0,320,240), _scene.World, _selection, _commands, _assets)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Content", "Project",
             () => new ContentBrowserPanelView(new CGRect(0,0,720,240), _assets, _scene.World, _selection, _commands)));
