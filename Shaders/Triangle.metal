@@ -27,7 +27,17 @@ fragment float4 ps_main(VSOut in [[stage_in]],texture2d<float> surfaceTexture [[
     float3 sampled=surfaceTexture.sample(samp,in.uv).rgb;float3 base=float3(u.baseR,u.baseG,u.baseB);float3 albedo;
     if(u.useTexture>0.5) albedo=clamp(sampled*base,0.0,1.0);
     else { float lum=dot(sampled,float3(0.299,0.587,0.114));float ghost=(lum-0.5)*0.035;albedo=clamp(base+ghost,0.0,1.0); }
-    float3 N=normalize(in.worldNormal);float3 dirL=normalize(-float3(u.dirDX,u.dirDY,u.dirDZ));float dirNdotL=max(dot(N,dirL),0.0);float3 lighting=float3(u.ambient)+dirNdotL*u.dirIntensity*float3(u.dirR,u.dirG,u.dirB);
+
+    float3 N=normalize(in.worldNormal);
+    // Procedural environment/sky contribution. Up-facing surfaces receive cool sky light,
+    // downward-facing surfaces receive warmer ground bounce, giving imported models readable
+    // form even before image-based lighting/cubemap support is enabled.
+    float hemi=clamp(N.y*0.5+0.5,0.0,1.0);
+    float3 skyAmbient=float3(0.42,0.54,0.72);
+    float3 groundAmbient=float3(0.22,0.19,0.16);
+    float3 environment=mix(groundAmbient,skyAmbient,hemi)*(u.ambient*1.85);
+
+    float3 dirL=normalize(-float3(u.dirDX,u.dirDY,u.dirDZ));float dirNdotL=max(dot(N,dirL),0.0);float3 lighting=environment+dirNdotL*u.dirIntensity*float3(u.dirR,u.dirG,u.dirB);
     if(u.localType>0.5){float3 lightPos=float3(u.localPX,u.localPY,u.localPZ);float3 toLight=lightPos-in.worldPosition;float distance=max(length(toLight),0.0001);float3 L=toLight/distance;float ndotl=max(dot(N,L),0.0);float range=max(u.localRange,0.001);float rangeFactor=clamp(1.0-distance/range,0.0,1.0);float attenuation=rangeFactor*rangeFactor;if(u.localType>1.5){float3 fromLight=normalize(in.worldPosition-lightPos);float coneDot=dot(fromLight,normalize(float3(u.localDX,u.localDY,u.localDZ)));float cone=smoothstep(u.localOuterCos,u.localInnerCos,coneDot);attenuation*=cone;}lighting+=ndotl*attenuation*u.localIntensity*float3(u.localR,u.localG,u.localB);}
     float3 lit=min(albedo*lighting,float3(1.0));if(in.selected>0.5)lit=mix(lit,float3(0.95,0.62,0.18),0.22);return float4(lit,1.0);
 }
