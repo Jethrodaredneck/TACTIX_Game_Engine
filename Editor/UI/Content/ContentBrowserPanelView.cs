@@ -3,6 +3,8 @@ using CoreGraphics;
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Importing;
 using TACTIX.Engine.Assets.Serialization;
+using TACTIX.Engine.Runtime.ECS;
+using TACTIX.Editor.Scene;
 using TACTIX.Editor.UI.Theme;
 
 namespace TACTIX.Editor.UI.Content;
@@ -10,6 +12,9 @@ namespace TACTIX.Editor.UI.Content;
 public sealed class ContentBrowserPanelView : NSView
 {
     private readonly AssetDatabase _assets;
+    private readonly World _world;
+    private readonly EditorSelection _selection;
+    private readonly EditorCommandStack _commands;
     private readonly AssetImportPipeline _importPipeline = AssetImportPipeline.CreateDefault();
     private readonly string _projectRoot;
     private readonly string _assetsRoot;
@@ -24,9 +29,12 @@ public sealed class ContentBrowserPanelView : NSView
     private readonly NSScrollView _scroll;
     private string _relativeFolder = "";
 
-    public ContentBrowserPanelView(CGRect frame, AssetDatabase assets) : base(frame)
+    public ContentBrowserPanelView(CGRect frame, AssetDatabase assets, World world, EditorSelection selection, EditorCommandStack commands) : base(frame)
     {
         _assets = assets;
+        _world = world;
+        _selection = selection;
+        _commands = commands;
         _projectRoot = assets.ProjectRoot;
         _assetsRoot = Path.Combine(_projectRoot, "Assets");
         Directory.CreateDirectory(_assetsRoot);
@@ -165,7 +173,7 @@ public sealed class ContentBrowserPanelView : NSView
             var name = Path.GetFileName(file);
             if (!Matches(name, filter) || !MatchesCategory(file, name, category)) continue;
             var ext = Path.GetExtension(name).ToLowerInvariant();
-            AddFileRow(name, BadgeForFile(file, ext), ReimportActionFor(file, ext));
+            AddFileRow(name, BadgeForFile(file, ext), InstantiateActionFor(file, ext), ReimportActionFor(file, ext));
             shown++;
         }
 
@@ -184,7 +192,7 @@ public sealed class ContentBrowserPanelView : NSView
         {
             return category switch
             {
-                "Models" => type == AssetType.Model,
+                "Models" => type is AssetType.Model or AssetType.Mesh,
                 "Textures" => type == AssetType.Texture,
                 "Audio" => type == AssetType.Audio,
                 "Terrain" => type == AssetType.Terrain,
@@ -209,14 +217,23 @@ public sealed class ContentBrowserPanelView : NSView
         _rows.AddArrangedSubview(button);
     }
 
-    private void AddFileRow(string name, string badge, Action? reimport)
+    private void AddFileRow(string name, string badge, Action? instantiate, Action? reimport)
     {
-        var row = new NSView(new CGRect(0, 0, 690, 26));
-        var nameLabel = EditorTheme.Label(name, 11); nameLabel.Frame = new CGRect(8, 4, 410, 18); row.AddSubview(nameLabel);
-        var typeLabel = EditorTheme.Label(badge, 9, true, true); typeLabel.Alignment = NSTextAlignment.Right; typeLabel.Frame = new CGRect(430, 5, 90, 16); row.AddSubview(typeLabel);
+        var row = new NSView(new CGRect(0, 0, 760, 26));
+        var nameLabel = EditorTheme.Label(name, 11); nameLabel.Frame = new CGRect(8, 4, 390, 18); row.AddSubview(nameLabel);
+        var typeLabel = EditorTheme.Label(badge, 9, true, true); typeLabel.Alignment = NSTextAlignment.Right; typeLabel.Frame = new CGRect(400, 5, 80, 16); row.AddSubview(typeLabel);
+        var x = 492;
+        if (instantiate != null)
+        {
+            var button = new NSButton(new CGRect(x, 3, 96, 20)) { Title = "Add to Scene" };
+            EditorTheme.StyleButton(button, true);
+            button.Activated += (_, _) => instantiate();
+            row.AddSubview(button);
+            x += 102;
+        }
         if (reimport != null)
         {
-            var button = new NSButton(new CGRect(532, 3, 84, 20)) { Title = "Reimport" };
+            var button = new NSButton(new CGRect(x, 3, 84, 20)) { Title = "Reimport" };
             EditorTheme.StyleButton(button);
             button.Activated += (_, _) => reimport();
             row.AddSubview(button);
@@ -251,6 +268,24 @@ public sealed class ContentBrowserPanelView : NSView
         catch { type = AssetType.Unknown; return false; }
     }
 
+    private Action? InstantiateActionFor(string file, string extension)
+    {
+        if (extension != ".tasset") return null;
+        try
+        {
+            var assetFile = JsonAssetSerializer.Load(file);
+            if (assetFile.Meta.Type != AssetType.Mesh) return null;
+            var guid = assetFile.Meta.Guid;
+            var name = assetFile.Meta.Name;
+            return () =>
+            {
+                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name));
+                _status.StringValue = $"Added {name} to Scene";
+            };
+        }
+        catch { return null; }
+    }
+
     private Action? ReimportActionFor(string file, string extension)
     {
         if (extension != ".tasset") return null;
@@ -270,7 +305,7 @@ public sealed class ContentBrowserPanelView : NSView
         panel.Prompt = "Import";
         panel.Message = blenderOnly
             ? "Choose a .blend file. TACTIX will launch Blender in the background, convert it to GLB, then create a TACTIX model asset."
-            : "Choose a supported source file to import into the TACTIX project.";
+            : "Choose a supported source file. OBJ files become native TACTIX meshes that can be added directly to the Scene.";
         panel.CanChooseFiles = true;
         panel.CanChooseDirectories = false;
         panel.AllowsMultipleSelection = !blenderOnly;
