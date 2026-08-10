@@ -21,11 +21,19 @@ public sealed class MetalRenderer : IDisposable
         public required string ContentHash;
     }
 
+    private sealed class AssetMeshGpu
+    {
+        public required IMTLBuffer Buffer;
+        public required int VertexCount;
+        public required string ContentHash;
+    }
+
     private readonly IMTLDevice _device;
     private readonly IMTLCommandQueue _queue;
     private readonly CAMetalLayer _layer;
     private readonly Dictionary<BuiltInMesh, (IMTLBuffer Buffer, int VertexCount)> _meshes = new();
     private readonly Dictionary<AssetGuid, TerrainGpu> _terrainMeshes = new();
+    private readonly Dictionary<AssetGuid, AssetMeshGpu> _assetMeshes = new();
     private readonly IMTLLibrary _library;
     private readonly IMTLRenderPipelineState _pipeline;
     private readonly IMTLDepthStencilState _depthState;
@@ -390,6 +398,53 @@ public sealed class MetalRenderer : IDisposable
         finally { handle.Free(); }
     }
 
+    private AssetMeshGpu? GetAssetMeshGpu(AssetGuid guid)
+    {
+        if (_assets == null || !_assets.Registry.TryGet(guid, out var meta)) return null;
+        if (_assetMeshes.TryGetValue(guid, out var cached) && cached.ContentHash == meta.ContentHash) return cached;
+        if (_assetMeshes.Remove(guid, out var old)) old.Buffer.Dispose();
+
+        var mesh = _assets.LoadMesh(guid);
+        var vertexCount = mesh.Indices?.Length ?? mesh.Positions.Length / 3;
+        var expanded = new float[vertexCount * 8];
+        var dst = 0;
+        for (var vertex = 0; vertex < vertexCount; vertex++)
+        {
+            var sourceIndex = mesh.Indices == null ? vertex : checked((int)mesh.Indices[vertex]);
+            var p = sourceIndex * 3;
+            var uv = sourceIndex * 2;
+            expanded[dst++] = mesh.Positions[p];
+            expanded[dst++] = mesh.Positions[p + 1];
+            expanded[dst++] = mesh.Positions[p + 2];
+            if (mesh.Normals != null && p + 2 < mesh.Normals.Length)
+            {
+                expanded[dst++] = mesh.Normals[p]; expanded[dst++] = mesh.Normals[p + 1]; expanded[dst++] = mesh.Normals[p + 2];
+            }
+            else
+            {
+                expanded[dst++] = 0; expanded[dst++] = 1; expanded[dst++] = 0;
+            }
+            if (mesh.UV0 != null && uv + 1 < mesh.UV0.Length)
+            {
+                expanded[dst++] = mesh.UV0[uv]; expanded[dst++] = mesh.UV0[uv + 1];
+            }
+            else
+            {
+                expanded[dst++] = 0; expanded[dst++] = 0;
+            }
+        }
+
+        var handle = GCHandle.Alloc(expanded, GCHandleType.Pinned);
+        try
+        {
+            var buffer = _device.CreateBuffer(handle.AddrOfPinnedObject(), (nuint)(expanded.Length * sizeof(float)), MTLResourceOptions.CpuCacheModeDefault);
+            var gpu = new AssetMeshGpu { Buffer = buffer, VertexCount = vertexCount, ContentHash = meta.ContentHash };
+            _assetMeshes[guid] = gpu;
+            return gpu;
+        }
+        finally { handle.Free(); }
+    }
+
     private Uniforms MakeUniforms(TransformComponent t, bool selected, float aspect, DirectionalLightData dir, LocalLightData local)
     {
         return new Uniforms
@@ -428,7 +483,7 @@ public sealed class MetalRenderer : IDisposable
     public void Draw()
     {
         using var pool=new NSAutoreleasePool();
-        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: lit primitives + terrain heightfield path running");
+        _drawCount++; if(_drawCount==1) Log.Info("MetalRenderer.Draw: lit primitives + terrain + imported mesh path running");
         var drawable=_layer.NextDrawable(); if(drawable==null) return;
         var tex=drawable.Texture;
         var depthDesc=MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.Depth32Float,tex.Width,tex.Height,false);
@@ -441,9 +496,6 @@ public sealed class MetalRenderer : IDisposable
         var cmd=_queue.CommandBuffer();
         var enc=cmd.CreateRenderCommandEncoder(pass);
         enc.SetRenderPipelineState(_pipeline); enc.SetDepthStencilState(_depthState);
-        // The editor camera basis mirrors clip-space handedness relative to our object-space winding.
-        // Treat counter-clockwise clip-space triangles as the exterior/front faces so back-face
-        // culling removes interior surfaces instead of making closed meshes look hollow.
         enc.SetCullMode(MTLCullMode.Back); enc.SetFrontFacingWinding(MTLWinding.CounterClockwise);
         enc.SetFragmentTexture(_logoTexture,0); enc.SetFragmentSamplerState(_sampler,0);
         enc.SetViewport(new MTLViewport{OriginX=0,OriginY=0,Width=tex.Width,Height=tex.Height,ZNear=0,ZFar=1});
@@ -457,9 +509,18 @@ public sealed class MetalRenderer : IDisposable
         {
             foreach(var (entity,mr) in _world.Query<MeshRendererComponent>())
             {
-                if(!_world.Has<TransformComponent>(entity)||!_meshes.TryGetValue(mr.Mesh,out var mesh)) continue;
+                if(!_world.Has<TransformComponent>(entity)) continue;
                 var t=_world.Get<TransformComponent>(entity);
-                DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                if (mr.UsesAssetMesh)
+                {
+                    var imported = GetAssetMeshGpu(mr.MeshAssetGuid);
+                    if (imported != null)
+                        DrawMesh(enc, imported.Buffer, imported.VertexCount, MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                }
+                else if(_meshes.TryGetValue(mr.Mesh,out var mesh))
+                {
+                    DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local),frameUniformBuffers);
+                }
             }
 
             foreach(var (entity,terrain) in _world.Query<TerrainComponent>())
@@ -483,6 +544,8 @@ public sealed class MetalRenderer : IDisposable
         _meshes.Clear();
         foreach(var terrain in _terrainMeshes.Values) terrain.Buffer.Dispose();
         _terrainMeshes.Clear();
+        foreach(var mesh in _assetMeshes.Values) mesh.Buffer.Dispose();
+        _assetMeshes.Clear();
         _logoTexture.Dispose(); _sampler.Dispose(); _depthState.Dispose(); _pipeline.Dispose(); _library.Dispose(); _queue.Dispose();
     }
 }
