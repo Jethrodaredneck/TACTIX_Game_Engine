@@ -6,14 +6,15 @@ using TACTIX.Engine.Assets.Formats;
 namespace TACTIX.Engine.Assets.Importing;
 
 /// <summary>
-/// Small dependency-free OBJ importer used to prove the native mesh pipeline end to end.
-/// Blender remains responsible for source authoring/coordinate conversion; this importer
-/// turns the exported OBJ triangles into a GUID-backed TACTIX MeshAsset.
+/// Dependency-free OBJ importer used by the static-mesh bootstrap path. It converts
+/// Wavefront geometry into native TACTIX MeshAssets, imports referenced MTL libraries,
+/// preserves the first usemtl binding as the mesh default, and normalizes triangle
+/// winding against authored normals so imported meshes do not appear inside-out.
 /// </summary>
 public sealed class ObjMeshImporter : IAssetImporter
 {
     public string Id => "tactix.obj.native";
-    public int Version => 1;
+    public int Version => 2;
     public AssetImportCapability Capability => AssetImportCapability.Native;
     public IReadOnlyCollection<string> Extensions { get; } = [".obj"];
 
@@ -31,6 +32,8 @@ public sealed class ObjMeshImporter : IAssetImporter
             var normals = new List<float>();
             var uvs = new List<float>();
             var indices = new List<uint>();
+            var materialLibraries = new List<string>();
+            string? firstMaterialName = null;
 
             foreach (var raw in File.ReadLines(request.SourcePath))
             {
@@ -45,10 +48,19 @@ public sealed class ObjMeshImporter : IAssetImporter
                         sourcePositions.Add(new Vector3(F(parts[1]), F(parts[2]), F(parts[3])));
                         break;
                     case "vn" when parts.Length >= 4:
-                        sourceNormals.Add(Vector3.Normalize(new Vector3(F(parts[1]), F(parts[2]), F(parts[3]))));
+                    {
+                        var n = new Vector3(F(parts[1]), F(parts[2]), F(parts[3]));
+                        sourceNormals.Add(n.LengthSquared() > 1e-12f ? Vector3.Normalize(n) : Vector3.UnitY);
                         break;
+                    }
                     case "vt" when parts.Length >= 3:
                         sourceUvs.Add(new Vector2(F(parts[1]), 1f - F(parts[2])));
+                        break;
+                    case "mtllib" when parts.Length >= 2:
+                        materialLibraries.Add(string.Join(" ", parts.Skip(1)));
+                        break;
+                    case "usemtl" when parts.Length >= 2 && string.IsNullOrWhiteSpace(firstMaterialName):
+                        firstMaterialName = string.Join(" ", parts.Skip(1));
                         break;
                     case "f" when parts.Length >= 4:
                     {
@@ -63,18 +75,62 @@ public sealed class ObjMeshImporter : IAssetImporter
             if (indices.Count == 0)
                 return new(false, Id, Array.Empty<ImportedAsset>(), "OBJ contains no renderable faces.");
 
-            var mesh = new MeshAsset(AssetGuid.New(), positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray());
+            var imported = new List<ImportedAsset>();
+            var materialGuid = ImportReferencedMaterials(database, request.SourcePath, materialLibraries, firstMaterialName, imported);
+
+            var mesh = new MeshAsset(AssetGuid.New(), positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray())
+            {
+                DefaultMaterialGuid = materialGuid
+            };
             var name = SafeName(Path.GetFileNameWithoutExtension(request.SourcePath));
             var destination = NormalizeDestination(request.DestinationDirectory);
             var projectPath = $"{destination}/{name}.tasset";
             var meta = database.SaveMesh(projectPath, mesh, name);
-            return new(true, Id, [new ImportedAsset(meta.Guid, meta.Type, meta.ProjectPath, meta.Name)],
-                $"Imported OBJ mesh ({indices.Count / 3} triangles) -> {meta.ProjectPath}");
+            imported.Add(new ImportedAsset(meta.Guid, meta.Type, meta.ProjectPath, meta.Name));
+
+            var materialText = materialGuid.HasValue ? " with MTL material" : "";
+            return new(true, Id, imported,
+                $"Imported OBJ mesh ({indices.Count / 3} triangles){materialText} -> {meta.ProjectPath}");
         }
         catch (Exception ex)
         {
             return new(false, Id, Array.Empty<ImportedAsset>(), $"OBJ import failed: {ex.Message}");
         }
+    }
+
+    private static AssetGuid? ImportReferencedMaterials(
+        AssetDatabase database,
+        string objPath,
+        IReadOnlyList<string> libraries,
+        string? firstMaterialName,
+        List<ImportedAsset> imported)
+    {
+        if (libraries.Count == 0) return null;
+
+        var objDirectory = Path.GetDirectoryName(Path.GetFullPath(objPath)) ?? Directory.GetCurrentDirectory();
+        var mtlImporter = new MtlMaterialImporter();
+        AssetGuid? fallback = null;
+        var desired = string.IsNullOrWhiteSpace(firstMaterialName) ? "" : SafeName(firstMaterialName);
+
+        foreach (var library in libraries.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var mtlPath = Path.GetFullPath(Path.Combine(objDirectory, library));
+            if (!File.Exists(mtlPath)) continue;
+
+            var result = mtlImporter.Import(database, new AssetImportRequest(mtlPath, "Assets/Materials"));
+            if (!result.Success) continue;
+
+            foreach (var asset in result.Assets)
+            {
+                if (asset.Type != AssetType.Material) continue;
+                if (!fallback.HasValue) fallback = asset.Guid;
+                if (!imported.Any(x => x.Guid == asset.Guid)) imported.Add(asset);
+                if (!string.IsNullOrWhiteSpace(desired) && string.Equals(asset.Name, desired, StringComparison.OrdinalIgnoreCase))
+                    fallback = asset.Guid;
+            }
+        }
+
+        return fallback;
     }
 
     private readonly record struct ObjVertex(int Position, int TexCoord, int Normal);
@@ -105,9 +161,32 @@ public sealed class ObjMeshImporter : IAssetImporter
         var faceNormal = Vector3.Cross(pb - pa, pc - pa);
         faceNormal = faceNormal.LengthSquared() > 1e-12f ? Vector3.Normalize(faceNormal) : Vector3.UnitY;
 
+        // Some OBJ exporters change handedness while converting Blender coordinates.
+        // If authored normals disagree with the resulting winding, flip the triangle so
+        // Metal back-face culling sees the same exterior surface the author intended.
+        var expected = AuthoredNormal(a, b, c, sourceNormals);
+        if (expected.HasValue && Vector3.Dot(faceNormal, expected.Value) < 0f)
+        {
+            (b, c) = (c, b);
+            (pb, pc) = (pc, pb);
+            faceNormal = -faceNormal;
+        }
+
         Emit(a, pa, faceNormal, sourceNormals, sourceUvs, positions, normals, uvs, indices);
         Emit(b, pb, faceNormal, sourceNormals, sourceUvs, positions, normals, uvs, indices);
         Emit(c, pc, faceNormal, sourceNormals, sourceUvs, positions, normals, uvs, indices);
+    }
+
+    private static Vector3? AuthoredNormal(ObjVertex a, ObjVertex b, ObjVertex c, List<Vector3> sourceNormals)
+    {
+        var values = new[] { a, b, c }
+            .Select(v => ResolveIndex(v.Normal, sourceNormals.Count))
+            .Where(i => (uint)i < (uint)sourceNormals.Count)
+            .Select(i => sourceNormals[i])
+            .ToArray();
+        if (values.Length == 0) return null;
+        var sum = values.Aggregate(Vector3.Zero, (current, n) => current + n);
+        return sum.LengthSquared() > 1e-12f ? Vector3.Normalize(sum) : null;
     }
 
     private static Vector3 Position(ObjVertex vertex, List<Vector3> positions)
