@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using TACTIX.Engine.Assets.Database;
+using TACTIX.Engine.Assets.Formats;
 using TACTIX.Engine.Assets.Importing;
 using TACTIX.Engine.Assets.Serialization;
 using TACTIX.Engine.Runtime.ECS;
@@ -21,6 +22,7 @@ public sealed class ContentBrowserPanelView : NSView
     private readonly NSSearchField _search;
     private readonly NSPopUpButton _category;
     private readonly NSPopUpButton _importMenu;
+    private readonly NSButton _createMaterialButton;
     private readonly NSTextField _path;
     private readonly NSTextField _status;
     private readonly NSButton _upButton;
@@ -54,7 +56,7 @@ public sealed class ContentBrowserPanelView : NSView
         AddSubview(_path);
 
         _category = new NSPopUpButton(new CGRect(0, 0, 120, 24), false);
-        _category.AddItems(new[] { "All Assets", "Models", "Textures", "Audio", "Scenes", "Terrain" });
+        _category.AddItems(new[] { "All Assets", "Models", "Materials", "Textures", "Audio", "Scenes", "Terrain" });
         _category.Activated += (_, _) => Refresh();
         AddSubview(_category);
 
@@ -68,7 +70,12 @@ public sealed class ContentBrowserPanelView : NSView
         _importMenu.Activated += (_, _) => HandleImportMenu();
         AddSubview(_importMenu);
 
-        _status = EditorTheme.Label("Choose Import ▾ to bring source assets into this project", 9, true);
+        _createMaterialButton = new NSButton(new CGRect(0, 0, 116, 24)) { Title = "+ Material", ToolTip = "Create a native TACTIX material" };
+        EditorTheme.StyleButton(_createMaterialButton, true);
+        _createMaterialButton.Activated += (_, _) => CreateMaterial();
+        AddSubview(_createMaterialButton);
+
+        _status = EditorTheme.Label("Import assets or create a material", 9, true);
         _status.LineBreakMode = NSLineBreakMode.TruncatingTail;
         AddSubview(_status);
 
@@ -76,6 +83,7 @@ public sealed class ContentBrowserPanelView : NSView
         {
             Orientation = NSUserInterfaceLayoutOrientation.Vertical,
             Alignment = NSLayoutAttribute.Leading,
+            Distribution = NSStackViewDistribution.Fill,
             Spacing = 2,
             EdgeInsets = new NSEdgeInsets(6, 6, 6, 6)
         };
@@ -114,9 +122,11 @@ public sealed class ContentBrowserPanelView : NSView
         var pathRight = Math.Max(pathX + 90, categoryX - 8);
         _path.Frame = new CGRect(pathX, h - 28, Math.Max(90, pathRight - pathX), 20);
         _importMenu.Frame = new CGRect(margin, importY, 160, 24);
-        _status.Frame = new CGRect(margin + 170, importY + 3, Math.Max(100, w - margin * 2 - 170), 18);
+        _createMaterialButton.Frame = new CGRect(margin + 166, importY, 116, 24);
+        _status.Frame = new CGRect(margin + 292, importY + 3, Math.Max(100, w - margin * 2 - 292), 18);
         _scroll.Frame = new CGRect(0, statusHeight, w, Math.Max(0, h - toolbarHeight - statusHeight));
-        _rows.Frame = new CGRect(0, 0, Math.Max(1, _scroll.ContentSize.Width), Math.Max(_scroll.ContentSize.Height, _rows.FittingSize.Height));
+        var fittingHeight = Math.Max(_scroll.ContentSize.Height, _rows.FittingSize.Height);
+        _rows.Frame = new CGRect(0, 0, Math.Max(1, _scroll.ContentSize.Width), fittingHeight);
     }
 
     private void HandleImportMenu()
@@ -173,7 +183,7 @@ public sealed class ContentBrowserPanelView : NSView
             var name = Path.GetFileName(file);
             if (!Matches(name, filter) || !MatchesCategory(file, name, category)) continue;
             var ext = Path.GetExtension(name).ToLowerInvariant();
-            AddFileRow(name, BadgeForFile(file, ext), InstantiateActionFor(file, ext), ReimportActionFor(file, ext));
+            AddFileRow(name, BadgeForFile(file, ext), InstantiateActionFor(file, ext), ReimportActionFor(file, ext), () => DeleteProjectItem(file));
             shown++;
         }
 
@@ -193,6 +203,7 @@ public sealed class ContentBrowserPanelView : NSView
             return category switch
             {
                 "Models" => type is AssetType.Model or AssetType.Mesh,
+                "Materials" => type == AssetType.Material,
                 "Textures" => type == AssetType.Texture,
                 "Audio" => type == AssetType.Audio,
                 "Terrain" => type == AssetType.Terrain,
@@ -202,7 +213,8 @@ public sealed class ContentBrowserPanelView : NSView
         return category switch
         {
             "Models" => ext is ".glb" or ".gltf" or ".fbx" or ".obj" or ".blend" or ".usd" or ".usda" or ".usdc" or ".usdz",
-            "Textures" => ext is ".png" or ".jpg" or ".jpeg" or ".tga" or ".hdr" or ".exr" or ".dds",
+            "Materials" => ext == ".mtl",
+            "Textures" => ext is ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" or ".tif" or ".tiff" or ".hdr" or ".exr" or ".dds",
             "Audio" => ext is ".wav" or ".ogg" or ".flac",
             "Scenes" => ext == ".tactixscene",
             "Terrain" => ext == ".tasset" && name.Contains("terrain", StringComparison.OrdinalIgnoreCase),
@@ -213,19 +225,28 @@ public sealed class ContentBrowserPanelView : NSView
     private void AddRow(string title, bool folder, Action action)
     {
         var button = new NSButton(new CGRect(0, 0, 520, 26)) { Title = title, BezelStyle = NSBezelStyle.Inline, Alignment = NSTextAlignment.Left, Font = NSFont.SystemFontOfSize(11), ContentTintColor = folder ? EditorTheme.Accent : EditorTheme.Text };
+        button.HeightAnchor.ConstraintEqualTo(26).Active = true;
         button.Activated += (_, _) => action();
         _rows.AddArrangedSubview(button);
     }
 
-    private void AddFileRow(string name, string badge, Action? instantiate, Action? reimport)
+    private void AddFileRow(string name, string badge, Action? instantiate, Action? reimport, Action delete)
     {
-        var row = new NSView(new CGRect(0, 0, 760, 26));
-        var nameLabel = EditorTheme.Label(name, 11); nameLabel.Frame = new CGRect(8, 4, 390, 18); row.AddSubview(nameLabel);
-        var typeLabel = EditorTheme.Label(badge, 9, true, true); typeLabel.Alignment = NSTextAlignment.Right; typeLabel.Frame = new CGRect(400, 5, 80, 16); row.AddSubview(typeLabel);
-        var x = 492;
+        var row = new NSView(new CGRect(0, 0, 820, 28));
+        row.HeightAnchor.ConstraintEqualTo(28).Active = true;
+        row.WidthAnchor.ConstraintGreaterThanOrEqualTo(700).Active = true;
+        var nameLabel = EditorTheme.Label(name, 11);
+        nameLabel.LineBreakMode = NSLineBreakMode.TruncatingMiddle;
+        nameLabel.Frame = new CGRect(8, 5, 360, 18);
+        row.AddSubview(nameLabel);
+        var typeLabel = EditorTheme.Label(badge, 9, true, true);
+        typeLabel.Alignment = NSTextAlignment.Right;
+        typeLabel.Frame = new CGRect(374, 6, 76, 16);
+        row.AddSubview(typeLabel);
+        var x = 460;
         if (instantiate != null)
         {
-            var button = new NSButton(new CGRect(x, 3, 96, 20)) { Title = "Add to Scene" };
+            var button = new NSButton(new CGRect(x, 4, 96, 20)) { Title = "Add to Scene" };
             EditorTheme.StyleButton(button, true);
             button.Activated += (_, _) => instantiate();
             row.AddSubview(button);
@@ -233,11 +254,16 @@ public sealed class ContentBrowserPanelView : NSView
         }
         if (reimport != null)
         {
-            var button = new NSButton(new CGRect(x, 3, 84, 20)) { Title = "Reimport" };
+            var button = new NSButton(new CGRect(x, 4, 80, 20)) { Title = "Reimport" };
             EditorTheme.StyleButton(button);
             button.Activated += (_, _) => reimport();
             row.AddSubview(button);
+            x += 86;
         }
+        var deleteButton = new NSButton(new CGRect(x, 4, 68, 20)) { Title = "Delete" };
+        EditorTheme.StyleButton(deleteButton);
+        deleteButton.Activated += (_, _) => delete();
+        row.AddSubview(deleteButton);
         _rows.AddArrangedSubview(row);
     }
 
@@ -253,10 +279,10 @@ public sealed class ContentBrowserPanelView : NSView
         }
         return extension switch
         {
-            ".tactixscene" => "SCENE",
+            ".tactixscene" => "SCENE", ".mtl" => "MTL",
             ".glb" or ".gltf" or ".fbx" or ".obj" or ".blend" or ".usd" or ".usda" or ".usdc" or ".usdz" => "MODEL",
             ".tactiximport.json" => "META",
-            ".png" or ".jpg" or ".jpeg" or ".tga" or ".hdr" or ".exr" or ".dds" => "TEXTURE",
+            ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" or ".tif" or ".tiff" or ".hdr" or ".exr" or ".dds" => "TEXTURE",
             ".wav" or ".ogg" or ".flac" => "AUDIO",
             _ => extension.TrimStart('.').ToUpperInvariant()
         };
@@ -274,14 +300,13 @@ public sealed class ContentBrowserPanelView : NSView
         try
         {
             var assetFile = JsonAssetSerializer.Load(file);
-            if (assetFile.Meta.Type != AssetType.Mesh || assetFile.Mesh == null) return null;
+            if (assetFile.Meta.Type != AssetType.Mesh) return null;
             var guid = assetFile.Meta.Guid;
             var name = assetFile.Meta.Name;
-            var materialGuid = assetFile.Mesh.Value.DefaultMaterialGuid;
             return () =>
             {
-                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name, materialGuid));
-                _status.StringValue = materialGuid.HasValue ? $"Added {name} to Scene with imported material" : $"Added {name} to Scene";
+                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name));
+                _status.StringValue = $"Added {name} to Scene";
             };
         }
         catch { return null; }
@@ -293,10 +318,63 @@ public sealed class ContentBrowserPanelView : NSView
         try
         {
             var assetFile = JsonAssetSerializer.Load(file);
-            if (assetFile.Meta.Type != AssetType.Model || string.IsNullOrWhiteSpace(assetFile.Meta.SourcePath)) return null;
+            if (string.IsNullOrWhiteSpace(assetFile.Meta.SourcePath)) return null;
+            if (assetFile.Meta.Type is not (AssetType.Model or AssetType.Texture)) return null;
             return () => ReimportAsset(file);
         }
         catch { return null; }
+    }
+
+    private void CreateMaterial()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(_assetsRoot, "Materials"));
+            var baseName = "New Material";
+            var name = baseName;
+            var n = 1;
+            while (File.Exists(_assets.ResolveProjectPath($"Assets/Materials/{name}.tasset"))) name = $"{baseName} {++n}";
+            var meta = _assets.SaveMaterial($"Assets/Materials/{name}.tasset", MaterialAsset.DefaultLit(), name);
+            _relativeFolder = "Materials";
+            _status.StringValue = $"Created {meta.Name}";
+            Refresh();
+        }
+        catch (Exception ex) { _status.StringValue = "Create material failed: " + ex.Message; }
+    }
+
+    private void DeleteProjectItem(string file)
+    {
+        var alert = new NSAlert { MessageText = "Delete project asset?", InformativeText = Path.GetFileName(file), AlertStyle = NSAlertStyle.Warning };
+        alert.AddButton("Delete");
+        alert.AddButton("Cancel");
+        if (alert.RunModal() != 1000) return;
+        try
+        {
+            if (Path.GetExtension(file).Equals(".tasset", StringComparison.OrdinalIgnoreCase))
+            {
+                var asset = JsonAssetSerializer.Load(file);
+                if (asset.Texture is { } texture)
+                {
+                    var image = _assets.ResolveProjectPath(texture.ImageProjectPath);
+                    if (File.Exists(image)) File.Delete(image);
+                }
+                if (asset.Model is { } model)
+                {
+                    var interchange = _assets.ResolveProjectPath(model.InterchangeProjectPath);
+                    if (File.Exists(interchange)) File.Delete(interchange);
+                    if (!string.IsNullOrWhiteSpace(model.ImportMetadataProjectPath))
+                    {
+                        var sidecar = _assets.ResolveProjectPath(model.ImportMetadataProjectPath);
+                        if (File.Exists(sidecar)) File.Delete(sidecar);
+                    }
+                }
+                _assets.Registry.Remove(asset.Meta.Guid);
+            }
+            File.Delete(file);
+            _status.StringValue = "Deleted " + Path.GetFileName(file);
+            Refresh();
+        }
+        catch (Exception ex) { _status.StringValue = "Delete failed: " + ex.Message; }
     }
 
     private void ImportFromFileDialog(bool blenderOnly)
@@ -306,20 +384,17 @@ public sealed class ContentBrowserPanelView : NSView
         panel.Prompt = "Import";
         panel.Message = blenderOnly
             ? "Choose a .blend file. TACTIX will launch Blender in the background, convert it to GLB, then create a TACTIX model asset."
-            : "Choose a supported source file. OBJ files become native TACTIX meshes; referenced MTL files are imported automatically.";
+            : "Choose models, MTL materials, or image textures to import into the TACTIX project.";
         panel.CanChooseFiles = true;
         panel.CanChooseDirectories = false;
         panel.AllowsMultipleSelection = !blenderOnly;
-
         if (panel.RunModal() != (nint)NSModalResponse.OK) return;
-
         var paths = panel.Urls.Select(u => u.Path).Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
         if (blenderOnly && paths.Any(p => !string.Equals(Path.GetExtension(p), ".blend", StringComparison.OrdinalIgnoreCase)))
         {
             _status.StringValue = "Blender import requires a .blend file";
             return;
         }
-
         _status.StringValue = blenderOnly ? "Launching Blender and converting source…" : $"Importing {paths.Length} source file{(paths.Length == 1 ? "" : "s")}…";
         var results = new List<AssetImportResult>();
         foreach (var path in paths) results.Add(ImportPath(path));
