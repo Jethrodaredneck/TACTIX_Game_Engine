@@ -6,6 +6,7 @@ using Metal;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using TACTIX.Engine.Assets.Database;
+using TACTIX.Engine.Assets.Formats;
 using TACTIX.Engine.Assets.Serialization;
 using TACTIX.Engine.Core.Logging;
 using TACTIX.Engine.Runtime.ECS;
@@ -16,7 +17,14 @@ namespace TACTIX.Engine.Rendering.Metal;
 public sealed class MetalRenderer : IDisposable
 {
     private sealed class TerrainGpu { public required IMTLBuffer Buffer; public required int VertexCount; public required string ContentHash; }
-    private sealed class AssetMeshGpu { public required IMTLBuffer Buffer; public required int VertexCount; public required string ContentHash; }
+    private sealed class AssetMeshGpu
+    {
+        public required IMTLBuffer Buffer;
+        public required int VertexCount;
+        public required string ContentHash;
+        public required MeshSubmesh[] Submeshes;
+        public AssetGuid? DefaultMaterialGuid;
+    }
     private sealed class TextureGpu { public required IMTLTexture Texture; public required string ContentHash; }
 
     private readonly IMTLDevice _device;
@@ -77,9 +85,15 @@ public sealed class MetalRenderer : IDisposable
 
     public MetalRenderer(IMTLDevice device, CAMetalLayer layer, string shaderSource)
     {
-        _device = device; _layer = layer; _queue = _device.CreateCommandQueue();
-        _library = CompileLibrary(shaderSource); _pipeline = CreatePipeline(_library); _depthState = CreateDepthState();
-        _logoTexture = LoadLogoTexture(); _sampler = CreateSampler(); BuildPrimitiveMeshes();
+        _device = device;
+        _layer = layer;
+        _queue = _device.CreateCommandQueue();
+        _library = CompileLibrary(shaderSource);
+        _pipeline = CreatePipeline(_library);
+        _depthState = CreateDepthState();
+        _logoTexture = LoadLogoTexture();
+        _sampler = CreateSampler();
+        BuildPrimitiveMeshes();
     }
 
     public void BindScene(World world) => _world = world;
@@ -87,27 +101,37 @@ public sealed class MetalRenderer : IDisposable
 
     public void SetEditorView(Vector3 position, Vector3 right, Vector3 up, Vector3 forward, float projectionScale, Entity? selectedEntity)
     {
-        _cameraPosition = position; _cameraRight = right; _cameraUp = up; _cameraForward = forward;
-        _projectionScale = projectionScale; _selectedEntityId = selectedEntity?.Id ?? 0;
+        _cameraPosition = position;
+        _cameraRight = right;
+        _cameraUp = up;
+        _cameraForward = forward;
+        _projectionScale = projectionScale;
+        _selectedEntityId = selectedEntity?.Id ?? 0;
     }
 
     private IMTLLibrary CompileLibrary(string source)
     {
-        NSError? error; var library = _device.CreateLibrary(source, new MTLCompileOptions(), out error);
-        if (error != null) throw new InvalidOperationException(error.LocalizedDescription); return library;
+        NSError? error;
+        var library = _device.CreateLibrary(source, new MTLCompileOptions(), out error);
+        if (error != null) throw new InvalidOperationException(error.LocalizedDescription);
+        return library;
     }
 
     private IMTLRenderPipelineState CreatePipeline(IMTLLibrary library)
     {
         var descriptor = new MTLRenderPipelineDescriptor { VertexFunction = library.CreateFunction("vs_main"), FragmentFunction = library.CreateFunction("ps_main") };
-        descriptor.ColorAttachments[0].PixelFormat = MTLPixelFormat.BGRA8Unorm; descriptor.DepthAttachmentPixelFormat = MTLPixelFormat.Depth32Float;
+        descriptor.ColorAttachments[0].PixelFormat = MTLPixelFormat.BGRA8Unorm;
+        descriptor.DepthAttachmentPixelFormat = MTLPixelFormat.Depth32Float;
         var vertex = new MTLVertexDescriptor();
         vertex.Attributes[0].Format = MTLVertexFormat.Float3; vertex.Attributes[0].Offset = 0; vertex.Attributes[0].BufferIndex = 0;
         vertex.Attributes[1].Format = MTLVertexFormat.Float3; vertex.Attributes[1].Offset = sizeof(float) * 3; vertex.Attributes[1].BufferIndex = 0;
         vertex.Attributes[2].Format = MTLVertexFormat.Float2; vertex.Attributes[2].Offset = sizeof(float) * 6; vertex.Attributes[2].BufferIndex = 0;
-        vertex.Layouts[0].Stride = sizeof(float) * 8; vertex.Layouts[0].StepFunction = MTLVertexStepFunction.PerVertex; descriptor.VertexDescriptor = vertex;
-        NSError? error; var pipeline = _device.CreateRenderPipelineState(descriptor, out error);
-        if (error != null) throw new InvalidOperationException(error.LocalizedDescription); return pipeline;
+        vertex.Layouts[0].Stride = sizeof(float) * 8; vertex.Layouts[0].StepFunction = MTLVertexStepFunction.PerVertex;
+        descriptor.VertexDescriptor = vertex;
+        NSError? error;
+        var pipeline = _device.CreateRenderPipelineState(descriptor, out error);
+        if (error != null) throw new InvalidOperationException(error.LocalizedDescription);
+        return pipeline;
     }
 
     private IMTLDepthStencilState CreateDepthState() => _device.CreateDepthStencilState(new MTLDepthStencilDescriptor { DepthCompareFunction = MTLCompareFunction.Less, DepthWriteEnabled = true });
@@ -122,7 +146,7 @@ public sealed class MetalRenderer : IDisposable
     private void AddMesh(BuiltInMesh type, float[] data)
     {
         var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-        try { var buffer = _device.CreateBuffer(handle.AddrOfPinnedObject(), (nuint)(data.Length * sizeof(float)), MTLResourceOptions.CpuCacheModeDefault); _meshes[type] = (buffer, data.Length / 8); }
+        try { _meshes[type] = (_device.CreateBuffer(handle.AddrOfPinnedObject(), (nuint)(data.Length * sizeof(float)), MTLResourceOptions.CpuCacheModeDefault), data.Length / 8); }
         finally { handle.Free(); }
     }
 
@@ -137,7 +161,8 @@ public sealed class MetalRenderer : IDisposable
         Quad(a,new(-1,-1,-1),new(-1,1,1),new(-1,-1,1),new(-1,1,-1),-Vector3.UnitX);
         Quad(a,new(1,-1,1),new(1,1,-1),new(1,-1,-1),new(1,1,1),Vector3.UnitX);
         Quad(a,new(-1,1,1),new(1,1,-1),new(1,1,1),new(-1,1,-1),Vector3.UnitY);
-        Quad(a,new(-1,-1,-1),new(1,-1,1),new(-1,-1,1),new(1,-1,-1),-Vector3.UnitY); return a.ToArray();
+        Quad(a,new(-1,-1,-1),new(1,-1,1),new(-1,-1,1),new(1,-1,-1),-Vector3.UnitY);
+        return a.ToArray();
     }
 
     private static float[] Plane() { var a=new List<float>(6*8); Quad(a,new(-1,0,-1),new(1,0,1),new(1,0,-1),new(-1,0,1),Vector3.UnitY); return a.ToArray(); }
@@ -166,7 +191,8 @@ public sealed class MetalRenderer : IDisposable
     private IMTLTexture LoadLogoTexture()
     {
         string[] candidates=[Path.Combine(NSBundle.MainBundle.ResourcePath??"","Assets","Branding","TACTIX_EngineLogo.jpg"),Path.Combine(AppContext.BaseDirectory,"Assets","Branding","TACTIX_EngineLogo.jpg"),Path.Combine(Directory.GetCurrentDirectory(),"Assets","Branding","TACTIX_EngineLogo.jpg")];
-        var path=candidates.FirstOrDefault(File.Exists)??throw new FileNotFoundException("TACTIX primitive logo texture not found."); return LoadImageTexture(path);
+        var path=candidates.FirstOrDefault(File.Exists)??throw new FileNotFoundException("TACTIX primitive logo texture not found.");
+        return LoadImageTexture(path);
     }
 
     private IMTLTexture LoadImageTexture(string path)
@@ -202,7 +228,12 @@ public sealed class MetalRenderer : IDisposable
 
     private AssetMeshGpu? GetAssetMeshGpu(AssetGuid guid)
     {
-        if(_assets==null||!_assets.Registry.TryGet(guid,out var meta))return null;if(_assetMeshes.TryGetValue(guid,out var cached)&&cached.ContentHash==meta.ContentHash)return cached;if(_assetMeshes.Remove(guid,out var old))old.Buffer.Dispose();var mesh=_assets.LoadMesh(guid);var vertexCount=mesh.Indices?.Length??mesh.Positions.Length/3;var expanded=new float[vertexCount*8];var dst=0;for(var vertex=0;vertex<vertexCount;vertex++){var sourceIndex=mesh.Indices==null?vertex:checked((int)mesh.Indices[vertex]);var p=sourceIndex*3;var uv=sourceIndex*2;expanded[dst++]=mesh.Positions[p];expanded[dst++]=mesh.Positions[p+1];expanded[dst++]=mesh.Positions[p+2];if(mesh.Normals!=null&&p+2<mesh.Normals.Length){expanded[dst++]=mesh.Normals[p];expanded[dst++]=mesh.Normals[p+1];expanded[dst++]=mesh.Normals[p+2];}else{expanded[dst++]=0;expanded[dst++]=1;expanded[dst++]=0;}if(mesh.UV0!=null&&uv+1<mesh.UV0.Length){expanded[dst++]=mesh.UV0[uv];expanded[dst++]=mesh.UV0[uv+1];}else{expanded[dst++]=0;expanded[dst++]=0;}}var handle=GCHandle.Alloc(expanded,GCHandleType.Pinned);try{var buffer=_device.CreateBuffer(handle.AddrOfPinnedObject(),(nuint)(expanded.Length*sizeof(float)),MTLResourceOptions.CpuCacheModeDefault);var gpu=new AssetMeshGpu{Buffer=buffer,VertexCount=vertexCount,ContentHash=meta.ContentHash};_assetMeshes[guid]=gpu;return gpu;}finally{handle.Free();}
+        if(_assets==null||!_assets.Registry.TryGet(guid,out var meta))return null;
+        if(_assetMeshes.TryGetValue(guid,out var cached)&&cached.ContentHash==meta.ContentHash)return cached;
+        if(_assetMeshes.Remove(guid,out var old))old.Buffer.Dispose();
+        var mesh=_assets.LoadMesh(guid);var vertexCount=mesh.Indices?.Length??mesh.Positions.Length/3;var expanded=new float[vertexCount*8];var dst=0;
+        for(var vertex=0;vertex<vertexCount;vertex++){var sourceIndex=mesh.Indices==null?vertex:checked((int)mesh.Indices[vertex]);var p=sourceIndex*3;var uv=sourceIndex*2;expanded[dst++]=mesh.Positions[p];expanded[dst++]=mesh.Positions[p+1];expanded[dst++]=mesh.Positions[p+2];if(mesh.Normals!=null&&p+2<mesh.Normals.Length){expanded[dst++]=mesh.Normals[p];expanded[dst++]=mesh.Normals[p+1];expanded[dst++]=mesh.Normals[p+2];}else{expanded[dst++]=0;expanded[dst++]=1;expanded[dst++]=0;}if(mesh.UV0!=null&&uv+1<mesh.UV0.Length){expanded[dst++]=mesh.UV0[uv];expanded[dst++]=mesh.UV0[uv+1];}else{expanded[dst++]=0;expanded[dst++]=0;}}
+        var handle=GCHandle.Alloc(expanded,GCHandleType.Pinned);try{var buffer=_device.CreateBuffer(handle.AddrOfPinnedObject(),(nuint)(expanded.Length*sizeof(float)),MTLResourceOptions.CpuCacheModeDefault);var gpu=new AssetMeshGpu{Buffer=buffer,VertexCount=vertexCount,ContentHash=meta.ContentHash,Submeshes=mesh.Submeshes??[],DefaultMaterialGuid=mesh.DefaultMaterialGuid};_assetMeshes[guid]=gpu;return gpu;}finally{handle.Free();}
     }
 
     private IMTLTexture? GetTextureGpu(AssetGuid guid)
@@ -213,10 +244,17 @@ public sealed class MetalRenderer : IDisposable
         try{var file=JsonAssetSerializer.Load(_assets.ResolveProjectPath(meta.ProjectPath));if(file.Texture==null)return null;var imagePath=_assets.ResolveProjectPath(file.Texture.Value.ImageProjectPath);if(!File.Exists(imagePath))return null;var texture=LoadImageTexture(imagePath);_textures[guid]=new TextureGpu{Texture=texture,ContentHash=meta.ContentHash};return texture;}catch{return null;}
     }
 
-    private SurfaceData ResolveSurface(MeshRendererComponent meshRenderer)
+    private SurfaceData ResolveSurface(AssetGuid? materialGuid)
     {
-        if(_assets!=null&&meshRenderer.UsesAssetMaterial){try{var material=_assets.LoadMaterial(meshRenderer.MaterialAssetGuid);IMTLTexture? texture=null;if(material.BaseColorTextureGuid.HasValue)texture=GetTextureGpu(material.BaseColorTextureGuid.Value);return new SurfaceData(new Vector4(Math.Clamp(material.BaseColorR,0f,1f),Math.Clamp(material.BaseColorG,0f,1f),Math.Clamp(material.BaseColorB,0f,1f),1f),texture);}catch{}}
+        if(_assets!=null&&materialGuid.HasValue&&materialGuid.Value.Value!=Guid.Empty){try{var material=_assets.LoadMaterial(materialGuid.Value);IMTLTexture? texture=null;if(material.BaseColorTextureGuid.HasValue)texture=GetTextureGpu(material.BaseColorTextureGuid.Value);return new SurfaceData(new Vector4(Math.Clamp(material.BaseColorR,0f,1f),Math.Clamp(material.BaseColorG,0f,1f),Math.Clamp(material.BaseColorB,0f,1f),1f),texture);}catch{}}
         return new SurfaceData(new Vector4(.68f,.69f,.72f,1f),null);
+    }
+
+    private AssetGuid? ResolveSlotMaterial(MeshRendererComponent renderer, AssetMeshGpu mesh, int slot)
+    {
+        var entityOverride=renderer.MaterialForSlot(slot);if(entityOverride.HasValue)return entityOverride;
+        if((uint)slot<(uint)mesh.Submeshes.Length&&mesh.Submeshes[slot].DefaultMaterialGuid.HasValue)return mesh.Submeshes[slot].DefaultMaterialGuid;
+        return mesh.DefaultMaterialGuid;
     }
 
     private Uniforms MakeUniforms(TransformComponent t,bool selected,float aspect,DirectionalLightData dir,LocalLightData local,SurfaceData surface)
@@ -224,16 +262,46 @@ public sealed class MetalRenderer : IDisposable
         var c=surface.BaseColor;return new Uniforms{Aspect=aspect,PX=t.Position.X,PY=t.Position.Y,PZ=t.Position.Z,RX=t.Rotation.X,RY=t.Rotation.Y,RZ=t.Rotation.Z,SX=t.Scale.X,SY=t.Scale.Y,SZ=t.Scale.Z,Selected=selected?1:0,CamPX=_cameraPosition.X,CamPY=_cameraPosition.Y,CamPZ=_cameraPosition.Z,CamRX=_cameraRight.X,CamRY=_cameraRight.Y,CamRZ=_cameraRight.Z,CamUX=_cameraUp.X,CamUY=_cameraUp.Y,CamUZ=_cameraUp.Z,CamFX=_cameraForward.X,CamFY=_cameraForward.Y,CamFZ=_cameraForward.Z,ProjectionScale=_projectionScale,BaseR=c.X,BaseG=c.Y,BaseB=c.Z,BaseA=c.W,UseTexture=surface.Texture!=null?1f:0f,DirDX=dir.Direction.X,DirDY=dir.Direction.Y,DirDZ=dir.Direction.Z,DirR=dir.Color.X,DirG=dir.Color.Y,DirB=dir.Color.Z,DirIntensity=dir.Intensity,Ambient=.18f,LocalType=local.Type,LocalPX=local.Position.X,LocalPY=local.Position.Y,LocalPZ=local.Position.Z,LocalDX=local.Direction.X,LocalDY=local.Direction.Y,LocalDZ=local.Direction.Z,LocalR=local.Color.X,LocalG=local.Color.Y,LocalB=local.Color.Z,LocalIntensity=local.Intensity,LocalRange=local.Range,LocalInnerCos=local.InnerCos,LocalOuterCos=local.OuterCos};
     }
 
-    private void DrawMesh(IMTLRenderCommandEncoder enc,IMTLBuffer meshBuffer,int vertexCount,Uniforms uniforms,List<IMTLBuffer> frameUniformBuffers)
+    private void DrawMesh(IMTLRenderCommandEncoder enc,IMTLBuffer meshBuffer,int firstVertex,int vertexCount,Uniforms uniforms,List<IMTLBuffer> frameUniformBuffers)
     {
-        var uniformBuffer=_device.CreateBuffer((nuint)Marshal.SizeOf<Uniforms>(),MTLResourceOptions.CpuCacheModeDefault);Marshal.StructureToPtr(uniforms,uniformBuffer.Contents,false);frameUniformBuffers.Add(uniformBuffer);enc.SetVertexBuffer(meshBuffer,0,0);enc.SetVertexBuffer(uniformBuffer,0,1);enc.SetFragmentBuffer(uniformBuffer,0,1);enc.DrawPrimitives(MTLPrimitiveType.Triangle,0,(nuint)vertexCount);
+        var uniformBuffer=_device.CreateBuffer((nuint)Marshal.SizeOf<Uniforms>(),MTLResourceOptions.CpuCacheModeDefault);Marshal.StructureToPtr(uniforms,uniformBuffer.Contents,false);frameUniformBuffers.Add(uniformBuffer);enc.SetVertexBuffer(meshBuffer,0,0);enc.SetVertexBuffer(uniformBuffer,0,1);enc.SetFragmentBuffer(uniformBuffer,0,1);enc.DrawPrimitives(MTLPrimitiveType.Triangle,(nuint)firstVertex,(nuint)vertexCount);
     }
 
     public void Draw()
     {
-        using var pool=new NSAutoreleasePool();_drawCount++;if(_drawCount==1)Log.Info("MetalRenderer.Draw: imported mesh/material/texture path running");var drawable=_layer.NextDrawable();if(drawable==null)return;var tex=drawable.Texture;var depthDesc=MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.Depth32Float,tex.Width,tex.Height,false);depthDesc.Usage=MTLTextureUsage.RenderTarget;depthDesc.StorageMode=MTLStorageMode.Private;using var depth=_device.CreateTexture(depthDesc);var pass=new MTLRenderPassDescriptor();pass.ColorAttachments[0].Texture=tex;pass.ColorAttachments[0].LoadAction=MTLLoadAction.Clear;pass.ColorAttachments[0].StoreAction=MTLStoreAction.Store;pass.ColorAttachments[0].ClearColor=new MTLClearColor(.075,.078,.085,1);pass.DepthAttachment.Texture=depth;pass.DepthAttachment.LoadAction=MTLLoadAction.Clear;pass.DepthAttachment.StoreAction=MTLStoreAction.DontCare;pass.DepthAttachment.ClearDepth=1;var cmd=_queue.CommandBuffer();var enc=cmd.CreateRenderCommandEncoder(pass);enc.SetRenderPipelineState(_pipeline);enc.SetDepthStencilState(_depthState);enc.SetCullMode(MTLCullMode.Back);enc.SetFrontFacingWinding(MTLWinding.CounterClockwise);enc.SetFragmentTexture(_logoTexture,0);enc.SetFragmentSamplerState(_sampler,0);enc.SetViewport(new MTLViewport{OriginX=0,OriginY=0,Width=tex.Width,Height=tex.Height,ZNear=0,ZFar=1});var frameUniformBuffers=new List<IMTLBuffer>();var dir=ResolveDirectionalLight();var local=ResolveLocalLight();var aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height));
-        if(_world!=null){foreach(var(entity,mr)in _world.Query<MeshRendererComponent>()){if(!_world.Has<TransformComponent>(entity))continue;var t=_world.Get<TransformComponent>(entity);var surface=ResolveSurface(mr);enc.SetFragmentTexture(surface.Texture??_logoTexture,0);if(mr.UsesAssetMesh){var imported=GetAssetMeshGpu(mr.MeshAssetGuid);if(imported!=null){enc.SetCullMode(MTLCullMode.None);DrawMesh(enc,imported.Buffer,imported.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);enc.SetCullMode(MTLCullMode.Back);}}else if(_meshes.TryGetValue(mr.Mesh,out var mesh)){DrawMesh(enc,mesh.Buffer,mesh.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);}}
-            enc.SetFragmentTexture(_logoTexture,0);foreach(var(entity,terrain)in _world.Query<TerrainComponent>()){if(!_world.Has<TransformComponent>(entity))continue;var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);if(gpu==null)continue;var t=_world.Get<TransformComponent>(entity);var surface=new SurfaceData(new Vector4(.48f,.52f,.43f,1f),null);DrawMesh(enc,gpu.Buffer,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);}}
+        using var pool=new NSAutoreleasePool();_drawCount++;if(_drawCount==1)Log.Info("MetalRenderer.Draw: source-defined mesh material slots running");var drawable=_layer.NextDrawable();if(drawable==null)return;var tex=drawable.Texture;var depthDesc=MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.Depth32Float,tex.Width,tex.Height,false);depthDesc.Usage=MTLTextureUsage.RenderTarget;depthDesc.StorageMode=MTLStorageMode.Private;using var depth=_device.CreateTexture(depthDesc);var pass=new MTLRenderPassDescriptor();pass.ColorAttachments[0].Texture=tex;pass.ColorAttachments[0].LoadAction=MTLLoadAction.Clear;pass.ColorAttachments[0].StoreAction=MTLStoreAction.Store;pass.ColorAttachments[0].ClearColor=new MTLClearColor(.075,.078,.085,1);pass.DepthAttachment.Texture=depth;pass.DepthAttachment.LoadAction=MTLLoadAction.Clear;pass.DepthAttachment.StoreAction=MTLStoreAction.DontCare;pass.DepthAttachment.ClearDepth=1;var cmd=_queue.CommandBuffer();var enc=cmd.CreateRenderCommandEncoder(pass);enc.SetRenderPipelineState(_pipeline);enc.SetDepthStencilState(_depthState);enc.SetCullMode(MTLCullMode.Back);enc.SetFrontFacingWinding(MTLWinding.CounterClockwise);enc.SetFragmentTexture(_logoTexture,0);enc.SetFragmentSamplerState(_sampler,0);enc.SetViewport(new MTLViewport{OriginX=0,OriginY=0,Width=tex.Width,Height=tex.Height,ZNear=0,ZFar=1});var frameUniformBuffers=new List<IMTLBuffer>();var dir=ResolveDirectionalLight();var local=ResolveLocalLight();var aspect=(float)Math.Max(.01,(double)tex.Width/(double)Math.Max((nuint)1,tex.Height));
+        if(_world!=null)
+        {
+            foreach(var(entity,mr)in _world.Query<MeshRendererComponent>())
+            {
+                if(!_world.Has<TransformComponent>(entity))continue;var t=_world.Get<TransformComponent>(entity);var selected=_selectedEntityId==entity.Id;
+                if(mr.UsesAssetMesh)
+                {
+                    var imported=GetAssetMeshGpu(mr.MeshAssetGuid);if(imported==null)continue;enc.SetCullMode(MTLCullMode.None);
+                    if(imported.Submeshes.Length>0)
+                    {
+                        for(var slot=0;slot<imported.Submeshes.Length;slot++)
+                        {
+                            var sub=imported.Submeshes[slot];if(sub.IndexCount<=0)continue;var surface=ResolveSurface(ResolveSlotMaterial(mr,imported,slot));enc.SetFragmentTexture(surface.Texture??_logoTexture,0);DrawMesh(enc,imported.Buffer,sub.FirstIndex,sub.IndexCount,MakeUniforms(t,selected,aspect,dir,local,surface),frameUniformBuffers);
+                        }
+                    }
+                    else
+                    {
+                        var surface=ResolveSurface(ResolveSlotMaterial(mr,imported,0));enc.SetFragmentTexture(surface.Texture??_logoTexture,0);DrawMesh(enc,imported.Buffer,0,imported.VertexCount,MakeUniforms(t,selected,aspect,dir,local,surface),frameUniformBuffers);
+                    }
+                    enc.SetCullMode(MTLCullMode.Back);
+                }
+                else if(_meshes.TryGetValue(mr.Mesh,out var mesh))
+                {
+                    var surface=ResolveSurface(mr.MaterialForSlot(0));enc.SetFragmentTexture(surface.Texture??_logoTexture,0);DrawMesh(enc,mesh.Buffer,0,mesh.VertexCount,MakeUniforms(t,selected,aspect,dir,local,surface),frameUniformBuffers);
+                }
+            }
+            enc.SetFragmentTexture(_logoTexture,0);
+            foreach(var(entity,terrain)in _world.Query<TerrainComponent>())
+            {
+                if(!_world.Has<TransformComponent>(entity))continue;var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);if(gpu==null)continue;var t=_world.Get<TransformComponent>(entity);var surface=new SurfaceData(new Vector4(.48f,.52f,.43f,1f),null);DrawMesh(enc,gpu.Buffer,0,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);
+            }
+        }
         enc.EndEncoding();cmd.PresentDrawable(drawable);cmd.AddCompletedHandler(_=>{foreach(var buffer in frameUniformBuffers)buffer.Dispose();});cmd.Commit();
     }
 
