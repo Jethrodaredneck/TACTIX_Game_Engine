@@ -51,37 +51,23 @@ public sealed class SceneEditorTool : EditorTool
             () => new InspectorPanelView(new CGRect(0,0,320,240), _scene.World, _selection, _commands)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Content", "Project",
-            () => new ContentBrowserPanelView(new CGRect(0,0,720,240), _assets)));
+            () => new ContentBrowserPanelView(new CGRect(0,0,720,240), _assets, _scene.World, _selection, _commands)));
 
         dockManager.RegisterPanel(new DockPanel("Scene.Console", "Console",
             () => Placeholder("Console coming later")));
 
-        // Keep the AI Bridge available as a dockable editor tool, but do not occupy
-        // the primary game-authoring workspace with it by default.
         dockManager.RegisterPanel(new DockPanel("Scene.AIBridge", "AI Bridge",
             () => new AIBridgePanelView(new CGRect(0, 0, 520, 260), _aiBridge)));
     }
 
     public override DockNode CreateDefaultLayout()
     {
-        // V2 IDs intentionally reset the old saved split ratios so existing users
-        // receive the new professional workspace on first launch after this change.
-        // The layout follows the familiar game-editor convention:
-        // Hierarchy | Scene | Inspector, with Project/Console below the Scene.
         var hierarchy = new TabDockNode("SceneV2.Left", new[] { "Scene.Hierarchy" });
         var viewport = new TabDockNode("SceneV2.ViewportDock", new[] { "Scene.Viewport" });
         var bottom = new TabDockNode("SceneV2.Bottom", new[] { "Scene.Content", "Scene.Console" }, "Scene.Content");
         var inspector = new TabDockNode("SceneV2.Right", new[] { "Scene.Inspector" });
-
-        // Give the Scene view the majority of vertical space while leaving a useful
-        // Project/Console strip that can be resized through the existing dock system.
         var center = new SplitDockNode("SceneV2.CenterVertical", vertical: false, ratio: 0.76, viewport, bottom);
-
-        // Inspector gets a stable professional-editor width instead of feeling like
-        // a narrow debug sidebar.
         var centerAndRight = new SplitDockNode("SceneV2.CenterRight", vertical: true, ratio: 0.72, center, inspector);
-
-        // Keep Hierarchy compact so the viewport remains the visual center of TACTIX.
         return new SplitDockNode("SceneV2.Root", vertical: true, ratio: 0.17, hierarchy, centerAndRight);
     }
 
