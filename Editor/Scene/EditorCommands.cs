@@ -109,12 +109,13 @@ public sealed class CreateAssetMeshCommand : IEditorCommand
     private readonly World _world;
     private readonly EditorSelection _selection;
     private readonly AssetGuid _meshGuid;
+    private readonly AssetGuid? _materialGuid;
     private readonly string _name;
     private int _entityId;
 
-    public CreateAssetMeshCommand(World world, EditorSelection selection, AssetGuid meshGuid, string name)
+    public CreateAssetMeshCommand(World world, EditorSelection selection, AssetGuid meshGuid, string name, AssetGuid? materialGuid = null)
     {
-        _world = world; _selection = selection; _meshGuid = meshGuid; _name = name;
+        _world = world; _selection = selection; _meshGuid = meshGuid; _name = name; _materialGuid = materialGuid;
     }
 
     public void Execute()
@@ -123,7 +124,7 @@ public sealed class CreateAssetMeshCommand : IEditorCommand
         _entityId = entity.Id;
         _world.Add(entity, new NameComponent(string.IsNullOrWhiteSpace(_name) ? "Imported Mesh" : _name));
         _world.Add(entity, TransformComponent.Identity);
-        _world.Add(entity, new MeshRendererComponent(_meshGuid));
+        _world.Add(entity, new MeshRendererComponent(_meshGuid, _materialGuid));
         _selection.Select(entity);
     }
 
