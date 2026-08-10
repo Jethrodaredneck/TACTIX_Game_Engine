@@ -11,7 +11,12 @@ public sealed class AssetImportPipeline
         _registry = registry;
     }
 
-    public static AssetImportPipeline CreateDefault() => new(BuiltInImporters.CreateDefault());
+    public static AssetImportPipeline CreateDefault()
+    {
+        var registry = BuiltInImporters.CreateDefault();
+        registry.Register(new ObjMeshImporter());
+        return new AssetImportPipeline(registry);
+    }
 
     public AssetImportResult Import(AssetDatabase database, AssetImportRequest request)
     {
