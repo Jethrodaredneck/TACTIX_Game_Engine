@@ -29,20 +29,24 @@ public struct MeshRendererComponent
 {
     public BuiltInMesh Mesh;
     public AssetGuid MeshAssetGuid;
+    public AssetGuid MaterialAssetGuid;
     public string Material;
     public bool UsesAssetMesh => MeshAssetGuid.Value != Guid.Empty;
+    public bool UsesAssetMaterial => MaterialAssetGuid.Value != Guid.Empty;
 
     public MeshRendererComponent(BuiltInMesh mesh, string material = "TACTIX_DefaultPrimitive")
     {
         Mesh = mesh;
         MeshAssetGuid = default;
+        MaterialAssetGuid = default;
         Material = material;
     }
 
-    public MeshRendererComponent(AssetGuid meshAssetGuid, string material = "TACTIX_DefaultPrimitive")
+    public MeshRendererComponent(AssetGuid meshAssetGuid, AssetGuid? materialAssetGuid = null, string material = "TACTIX_DefaultPrimitive")
     {
         Mesh = BuiltInMesh.Cube;
         MeshAssetGuid = meshAssetGuid;
+        MaterialAssetGuid = materialAssetGuid ?? default;
         Material = material;
     }
 }
