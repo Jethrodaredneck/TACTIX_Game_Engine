@@ -300,14 +300,25 @@ public sealed class ContentBrowserPanelView : NSView
         try
         {
             var assetFile = JsonAssetSerializer.Load(file);
-            if (assetFile.Meta.Type != AssetType.Mesh) return null;
             var guid = assetFile.Meta.Guid;
             var name = assetFile.Meta.Name;
-            return () =>
+            if (assetFile.Meta.Type == AssetType.Mesh)
             {
-                _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name));
-                _status.StringValue = $"Added {name} to Scene";
-            };
+                return () =>
+                {
+                    _commands.Execute(new CreateAssetMeshCommand(_world, _selection, guid, name));
+                    _status.StringValue = $"Added {name} to Scene";
+                };
+            }
+            if (assetFile.Meta.Type == AssetType.Model && assetFile.Model is { } model && model.Nodes.Length > 0)
+            {
+                return () =>
+                {
+                    _commands.Execute(new CreateModelInstanceCommand(_world, _selection, _assets, guid, name));
+                    _status.StringValue = $"Added {name} hierarchy to Scene ({model.Nodes.Length} nodes)";
+                };
+            }
+            return null;
         }
         catch { return null; }
     }
