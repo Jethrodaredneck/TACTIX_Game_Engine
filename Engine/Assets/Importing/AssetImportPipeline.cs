@@ -18,6 +18,9 @@ public sealed class AssetImportPipeline
         registry.Register(new MtlMaterialImporter());
         registry.Register(new TextureAssetImporter());
         registry.Register(new GlbNativeMeshImporter());
+        // Highest-priority .glb handler: composes native meshes/materials/textures with
+        // a format-independent ModelAsset node hierarchy for scene instantiation.
+        registry.Register(new GlbSceneModelImporter());
         return new AssetImportPipeline(registry);
     }
 
