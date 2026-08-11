@@ -4,6 +4,8 @@
     <TargetFramework>net9.0-macos15.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationId>com.tactix.engine.cli</ApplicationId>
+    <CreatePackage>false</CreatePackage>
   </PropertyGroup>
 
   <ItemGroup>

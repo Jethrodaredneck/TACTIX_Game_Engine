@@ -8,13 +8,10 @@ using TACTIX.Engine.AI;
 using TACTIX.Engine.Runtime.Scene;
 using TactixScene = TACTIX.Engine.Runtime.Scene.Scene;
 using TACTIX.Editor.Scene;
+using TACTIX.Engine.Assets.Database;
 
 namespace TACTIX.Editor.UI.Docking;
 
-/// <summary>
-/// Stage-three editor host. It no longer knows about concrete Hierarchy/Inspector/
-/// Console panels; those come from EditorTool registrations and a DockNode tree.
-/// </summary>
 public sealed class DockHostView : NSView
 {
     private readonly DockManager _dockManager = new();
@@ -24,12 +21,12 @@ public sealed class DockHostView : NSView
 
     public ViewportPanelView Viewport => _sceneTool.Viewport;
 
-    public DockHostView(CGRect frame, IMTLDevice device, AIBridgeServer aiBridge, TactixScene scene, EditorSelection selection, EditorCommandStack commands, string projectRoot) : base(frame)
+    public DockHostView(CGRect frame, IMTLDevice device, AIBridgeServer aiBridge, TactixScene scene, EditorSelection selection, EditorCommandStack commands, AssetDatabase assets) : base(frame)
     {
         WantsLayer = true;
         Layer!.BackgroundColor = NSColor.FromRgb(20, 20, 22).CGColor;
 
-        _sceneTool = new SceneEditorTool(device, aiBridge, scene, selection, commands, projectRoot);
+        _sceneTool = new SceneEditorTool(device, aiBridge, scene, selection, commands, assets);
         _sceneTool.RegisterPanels(_dockManager);
 
         _layoutRoot = _dockManager.Build(_sceneTool.CreateDefaultLayout(), Bounds);

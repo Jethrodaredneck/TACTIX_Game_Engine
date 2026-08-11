@@ -1,16 +1,13 @@
 using AppKit;
 using CoreGraphics;
+using TACTIX.Editor.UI.Theme;
 
 namespace TACTIX.Editor.UI.Docking;
 
-/// <summary>
-/// Native AppKit tab host. Stage 3 adds direct mouse-driven dragging so tabs can
-/// move between groups, split a target group, or become floating windows.
-/// </summary>
 public sealed class DockTabGroupView : NSView
 {
-    private const double TabBarHeight = 28.0;
-    private const double DefaultTabWidth = 132.0;
+    private const double TabBarHeight = 30.0;
+    private const double DefaultTabWidth = 128.0;
 
     private readonly DockManager _manager;
     private readonly NSView _tabBar;
@@ -28,22 +25,15 @@ public sealed class DockTabGroupView : NSView
     {
         NodeId = nodeId;
         _manager = manager;
-        WantsLayer = true;
-        Layer!.BackgroundColor = NSColor.FromRgb(25, 25, 28).CGColor;
+        EditorTheme.ApplyPanel(this);
 
-        _tabBar = new NSView(new CGRect(0, Math.Max(0, frame.Height - TabBarHeight), frame.Width, TabBarHeight))
-        {
-            WantsLayer = true,
-            AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MinYMargin
-        };
-        _tabBar.Layer!.BackgroundColor = NSColor.FromRgb(42, 42, 46).CGColor;
+        _tabBar = new NSView(new CGRect(0, Math.Max(0, frame.Height - TabBarHeight), frame.Width, TabBarHeight));
+        EditorTheme.ApplyPanel(_tabBar, EditorTheme.TabBar);
+        _tabBar.AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MinYMargin;
 
-        _contentHost = new NSView(new CGRect(0, 0, frame.Width, Math.Max(0, frame.Height - TabBarHeight)))
-        {
-            WantsLayer = true,
-            AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable
-        };
-        _contentHost.Layer!.BackgroundColor = NSColor.FromRgb(25, 25, 28).CGColor;
+        _contentHost = new NSView(new CGRect(0, 0, frame.Width, Math.Max(0, frame.Height - TabBarHeight)));
+        EditorTheme.ApplyPanel(_contentHost);
+        _contentHost.AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable;
 
         AddSubview(_contentHost);
         AddSubview(_tabBar);
@@ -59,10 +49,7 @@ public sealed class DockTabGroupView : NSView
             return;
         }
 
-        var button = new DockTabButtonView(
-            CGRect.Empty,
-            panel.Id,
-            panel.Title,
+        var button = new DockTabButtonView(CGRect.Empty, panel.Id, panel.Title,
             () => Select(panel.Id),
             (id, e) => _manager.BeginTabDrag(this, id, e),
             e => _manager.UpdateTabDrag(e),
@@ -71,31 +58,23 @@ public sealed class DockTabGroupView : NSView
         _tabs.Add((panel, button));
         _tabBar.AddSubview(button);
         LayoutTabs();
-
-        if (select || _selectedPanelId == null)
-            Select(panel.Id);
+        if (select || _selectedPanelId == null) Select(panel.Id);
     }
 
     public DockPanel? RemoveTab(string panelId)
     {
         var index = _tabs.FindIndex(x => x.Panel.Id == panelId);
-        if (index < 0)
-            return null;
-
+        if (index < 0) return null;
         var removed = _tabs[index];
         removed.Button.RemoveFromSuperview();
         _tabs.RemoveAt(index);
 
         if (_selectedPanelId == panelId)
         {
-            foreach (var existing in _contentHost.Subviews)
-                existing.RemoveFromSuperview();
+            foreach (var existing in _contentHost.Subviews) existing.RemoveFromSuperview();
             _selectedPanelId = null;
-
-            if (_tabs.Count > 0)
-                Select(_tabs[Math.Min(index, _tabs.Count - 1)].Panel.Id);
+            if (_tabs.Count > 0) Select(_tabs[Math.Min(index, _tabs.Count - 1)].Panel.Id);
         }
-
         LayoutTabs();
         return removed.Panel;
     }
@@ -103,37 +82,27 @@ public sealed class DockTabGroupView : NSView
     public void Select(string panelId)
     {
         var index = _tabs.FindIndex(x => x.Panel.Id == panelId);
-        if (index < 0)
-            return;
-
+        if (index < 0) return;
         var tab = _tabs[index];
-
-        foreach (var existing in _contentHost.Subviews)
-            existing.RemoveFromSuperview();
-
+        foreach (var existing in _contentHost.Subviews) existing.RemoveFromSuperview();
         var content = tab.Panel.GetContent();
         content.RemoveFromSuperview();
         content.Frame = _contentHost.Bounds;
         content.AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable;
         _contentHost.AddSubview(content);
-
         _selectedPanelId = panelId;
-        foreach (var item in _tabs)
-            item.Button.SetSelected(item.Panel.Id == panelId);
+        foreach (var item in _tabs) item.Button.SetSelected(item.Panel.Id == panelId);
     }
 
     internal DockDropRegion ShowDropOverlay(CGPoint screenPoint)
     {
-        if (Window == null)
-            return DockDropRegion.None;
-
+        if (Window == null) return DockDropRegion.None;
         _dropOverlay ??= new DockDropOverlayView(Bounds);
         if (_dropOverlay.Superview == null)
         {
             _dropOverlay.Frame = Bounds;
             AddSubview(_dropOverlay);
         }
-
         var pointInWindow = Window.ConvertPointFromScreen(screenPoint);
         var local = ConvertPointFromView(pointInWindow, null);
         var region = _dropOverlay.RegionAt(local);
@@ -141,59 +110,44 @@ public sealed class DockTabGroupView : NSView
         return region;
     }
 
-    internal void HideDropOverlay()
-    {
-        _dropOverlay?.RemoveFromSuperview();
-    }
+    internal void HideDropOverlay() => _dropOverlay?.RemoveFromSuperview();
 
     internal bool ContainsScreenPoint(CGPoint screenPoint)
     {
-        if (Window == null)
-            return false;
-
+        if (Window == null) return false;
         var pointInWindow = Window.ConvertPointFromScreen(screenPoint);
-        var local = ConvertPointFromView(pointInWindow, null);
-        return Bounds.Contains(local);
+        return Bounds.Contains(ConvertPointFromView(pointInWindow, null));
     }
 
     public override void ResizeSubviewsWithOldSize(CGSize oldSize)
     {
         base.ResizeSubviewsWithOldSize(oldSize);
         LayoutTabs();
-        if (_dropOverlay != null)
-            _dropOverlay.Frame = Bounds;
+        if (_dropOverlay != null) _dropOverlay.Frame = Bounds;
     }
 
     private void LayoutTabs()
     {
         var available = Math.Max(1, _tabBar.Bounds.Width);
-        var tabWidth = Math.Min(DefaultTabWidth, Math.Max(86, available / Math.Max(1, _tabs.Count)));
-
-        for (var i = 0; i < _tabs.Count; i++)
-            _tabs[i].Button.Frame = new CGRect(i * tabWidth, 0, tabWidth, TabBarHeight);
+        var tabWidth = Math.Min(DefaultTabWidth, Math.Max(84, available / Math.Max(1, _tabs.Count)));
+        for (var i = 0; i < _tabs.Count; i++) _tabs[i].Button.Frame = new CGRect(i * tabWidth, 0, tabWidth, TabBarHeight);
     }
 
     private sealed class DockTabButtonView : NSView
     {
         private const double DragThreshold = 5.0;
-
         private readonly string _panelId;
         private readonly Action _onClick;
         private readonly Action<string, NSEvent> _onBeginDrag;
         private readonly Action<NSEvent> _onDrag;
         private readonly Action<NSEvent> _onEndDrag;
         private readonly NSTextField _label;
+        private readonly NSView _accent;
         private CGPoint _mouseDownPoint;
         private bool _dragging;
 
-        public DockTabButtonView(
-            CGRect frame,
-            string panelId,
-            string title,
-            Action onClick,
-            Action<string, NSEvent> onBeginDrag,
-            Action<NSEvent> onDrag,
-            Action<NSEvent> onEndDrag) : base(frame)
+        public DockTabButtonView(CGRect frame, string panelId, string title, Action onClick,
+            Action<string, NSEvent> onBeginDrag, Action<NSEvent> onDrag, Action<NSEvent> onEndDrag) : base(frame)
         {
             _panelId = panelId;
             _onClick = onClick;
@@ -203,28 +157,23 @@ public sealed class DockTabGroupView : NSView
             WantsLayer = true;
             AutoresizingMask = NSViewResizingMask.MaxXMargin;
 
-            _label = new NSTextField(new CGRect(10, 5, Math.Max(0, frame.Width - 20), 18))
-            {
-                StringValue = title,
-                Editable = false,
-                Selectable = false,
-                Bezeled = false,
-                DrawsBackground = false,
-                TextColor = NSColor.FromRgb(205, 205, 210),
-                Font = NSFont.SystemFontOfSize(12),
-                AutoresizingMask = NSViewResizingMask.WidthSizable
-            };
-
+            _label = EditorTheme.Label(title, 11);
+            _label.Frame = new CGRect(12, 7, Math.Max(0, frame.Width - 24), 17);
+            _label.AutoresizingMask = NSViewResizingMask.WidthSizable;
             AddSubview(_label);
+
+            _accent = new NSView(new CGRect(0, 0, frame.Width, 2)) { WantsLayer = true, AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MaxYMargin };
+            _accent.Layer!.BackgroundColor = EditorTheme.Accent.CGColor;
+            AddSubview(_accent);
             SetSelected(false);
         }
 
         public void SetSelected(bool selected)
         {
-            Layer!.BackgroundColor = selected
-                ? NSColor.FromRgb(55, 55, 60).CGColor
-                : NSColor.FromRgb(42, 42, 46).CGColor;
-            _label.Font = selected ? NSFont.BoldSystemFontOfSize(12) : NSFont.SystemFontOfSize(12);
+            Layer!.BackgroundColor = (selected ? EditorTheme.TabSelected : EditorTheme.TabBar).CGColor;
+            _label.TextColor = selected ? EditorTheme.Text : EditorTheme.TextMuted;
+            _label.Font = selected ? NSFont.BoldSystemFontOfSize(11) : NSFont.SystemFontOfSize(11);
+            _accent.Hidden = !selected;
         }
 
         public override void MouseDown(NSEvent theEvent)
@@ -239,24 +188,17 @@ public sealed class DockTabGroupView : NSView
             var p = theEvent.LocationInWindow;
             var dx = p.X - _mouseDownPoint.X;
             var dy = p.Y - _mouseDownPoint.Y;
-
             if (!_dragging && Math.Sqrt(dx * dx + dy * dy) >= DragThreshold)
             {
                 _dragging = true;
                 _onBeginDrag(_panelId, theEvent);
             }
-
-            if (_dragging)
-                _onDrag(theEvent);
+            if (_dragging) _onDrag(theEvent);
         }
 
         public override void MouseUp(NSEvent theEvent)
         {
-            if (_dragging)
-                _onEndDrag(theEvent);
-            else
-                _onClick();
-
+            if (_dragging) _onEndDrag(theEvent); else _onClick();
             _dragging = false;
         }
     }

@@ -1,10 +1,13 @@
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Formats;
+using TACTIX.Engine.Assets.Importing;
 using TACTIX.Engine.Assets.Serialization;
 
 // tactix import-obj <source.obj> <projectRoot> [assetProjectPath]
 
-static int Main(string[] args)
+return Run(args);
+
+static int Run(string[] args)
 {
     if (args.Length == 0 || args[0] is "-h" or "--help")
     {
@@ -16,6 +19,8 @@ static int Main(string[] args)
     {
         return args[0] switch
         {
+            "import-asset" => ImportAsset(args.Skip(1).ToArray()),
+            "import-pending" => ImportPending(args.Skip(1).ToArray()),
             "import-obj" => ImportObj(args.Skip(1).ToArray()),
             _ => Fail($"Unknown command: {args[0]}")
         };
@@ -31,6 +36,8 @@ static void PrintHelp()
 {
     Console.WriteLine("TACTIX CLI");
     Console.WriteLine("\nCommands:");
+    Console.WriteLine("  import-asset <source.glb|source.gltf|source.blend> <projectRoot> [assetProjectPath]");
+    Console.WriteLine("  import-pending <projectRoot>");
     Console.WriteLine("  import-obj <source.obj> <projectRoot> [assetProjectPath]");
 }
 
@@ -38,6 +45,60 @@ static int Fail(string msg)
 {
     Console.Error.WriteLine(msg);
     return 1;
+}
+
+static int ImportAsset(string[] args)
+{
+    if (args.Length is < 2 or > 3)
+        return Fail("import-asset requires: <source.glb|source.gltf|source.blend> <projectRoot> [assetProjectPath]");
+
+    var src = Path.GetFullPath(args[0]);
+    var projectRoot = Path.GetFullPath(args[1]);
+    if (!File.Exists(src)) return Fail($"File not found: {src}");
+
+    var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (args.Length == 3)
+        settings["assetProjectPath"] = args[2];
+
+    var db = new AssetDatabase(projectRoot);
+    db.Initialize();
+    var result = AssetImportPipeline.CreateDefault().Import(db, new AssetImportRequest(src, "Assets/Models", settings));
+    return PrintImportResult(result);
+}
+
+static int ImportPending(string[] args)
+{
+    if (args.Length != 1)
+        return Fail("import-pending requires: <projectRoot>");
+
+    var projectRoot = Path.GetFullPath(args[0]);
+    var db = new AssetDatabase(projectRoot);
+    db.Initialize();
+    var results = AssetImportPipeline.CreateDefault().ImportPending(db, "Assets/Models");
+    if (results.Count == 0)
+    {
+        Console.WriteLine("No pending imports.");
+        return 0;
+    }
+
+    var failed = false;
+    foreach (var result in results)
+        failed |= PrintImportResult(result) != 0;
+    return failed ? 1 : 0;
+}
+
+static int PrintImportResult(AssetImportResult result)
+{
+    if (!result.Success)
+    {
+        Console.Error.WriteLine(result.Message);
+        return 1;
+    }
+
+    Console.WriteLine(result.Message);
+    foreach (var asset in result.Assets)
+        Console.WriteLine($"Registered asset: {asset.Guid} {asset.Type} {asset.ProjectPath}");
+    return 0;
 }
 
 static int ImportObj(string[] args)
