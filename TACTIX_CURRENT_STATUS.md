@@ -28,9 +28,12 @@ Do not restart feature work from `main` until the stacked branches have been smo
 - Option temporarily lowers in Raise/Lower mode; Shift temporarily smooths; Control temporarily flattens.
 - Adjustable world-space brush radius and brush strength.
 - Flatten captures the first contact height as the stable target for the stroke.
+- Preview writes and terrain GPU rebuilds are throttled to a bounded cadence while every brush stamp remains in memory for the final result.
 - One complete mouse stroke commits as one `IEditorCommand`, so Command-Z/Redo operates per stroke rather than per brush sample.
 - Escape/cancel restores the terrain from the pre-stroke snapshot.
 - Terrain brush inputs are clamped/validated and normalized-height sampling is shared rather than duplicated in UI code.
+- Terrain duplication deep-copies the backing `TerrainAsset` to a new GUID/project path so sculpting one terrain cannot silently modify its duplicate.
+- Undoing a terrain duplication removes its generated asset; redoing it recreates the same independent asset from the command snapshot.
 
 ## Required Mac smoke test before promotion
 
@@ -43,7 +46,8 @@ Do not restart feature work from `main` until the stacked branches have been smo
 7. Verify one Command-Z removes one full stroke and Shift-Command-Z restores it.
 8. Verify Escape during a stroke restores its starting terrain.
 9. Orbit/pan/dolly while Terrain mode is enabled and confirm camera interaction remains stable.
-10. Save/reload the scene and confirm the terrain GUID still resolves to the edited `.tasset`.
+10. Duplicate a terrain, sculpt only one copy, and verify the other copy remains unchanged; then Undo/Redo the duplication.
+11. Save/reload the scene and confirm terrain GUIDs still resolve to the edited `.tasset` files.
 
 ## Next dependencies after the sculpt smoke test
 
