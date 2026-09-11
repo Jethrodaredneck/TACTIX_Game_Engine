@@ -37,6 +37,16 @@ public sealed class SceneEditorTool : EditorTool
         _commands = commands;
         _assets = assets;
         Viewport = new ViewportPanelView(new CGRect(0, 0, 640, 360), _device, _scene.World, _selection, _commands);
+
+        // Keep terrain authoring modular: the overlay is dormant until explicitly enabled
+        // and does not alter the existing transform-gizmo interaction surface.
+        Viewport.AddSubview(new TerrainSculptOverlay(
+            Viewport.Bounds,
+            Viewport,
+            _scene.World,
+            _selection,
+            _commands,
+            _assets));
     }
 
     public override void RegisterPanels(DockManager dockManager)
