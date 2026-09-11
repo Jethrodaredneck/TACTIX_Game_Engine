@@ -19,6 +19,8 @@ namespace TACTIX.Editor.UI.Viewport;
 /// </summary>
 public sealed class TerrainSculptOverlay : NSView
 {
+    private static readonly long PreviewIntervalTicks = TimeSpan.TicksPerMillisecond * 75;
+
     private readonly ViewportPanelView _viewport;
     private readonly World _world;
     private readonly EditorSelection _selection;
@@ -43,6 +45,7 @@ public sealed class TerrainSculptOverlay : NSView
     private float _strokeFlattenHeight;
     private Vector3? _lastStampWorld;
     private TerrainHit? _lastHit;
+    private long _nextPreviewWriteTicks;
 
     private float _radiusWorld = 4f;
     private float _strength = 0.45f;
@@ -220,6 +223,7 @@ public sealed class TerrainSculptOverlay : NSView
     {
         _lastHit = null;
         _viewport.RightMouseDown(theEvent);
+        Window?.MakeFirstResponder(this);
         NeedsDisplay = true;
     }
 
@@ -235,6 +239,7 @@ public sealed class TerrainSculptOverlay : NSView
     {
         _lastHit = null;
         _viewport.OtherMouseDown(theEvent);
+        Window?.MakeFirstResponder(this);
         NeedsDisplay = true;
     }
 
@@ -375,11 +380,12 @@ public sealed class TerrainSculptOverlay : NSView
         _strokeFlattenHeight = TerrainBrush.SampleHeightNormalized(terrain, hit.NormalizedX, hit.NormalizedZ);
         _lastStampWorld = null;
         _lastHit = hit;
+        _nextPreviewWriteTicks = 0;
         _sculpting = true;
-        ApplyStamp(hit, modifiers);
+        ApplyStamp(hit, modifiers, forcePreview: true);
     }
 
-    private void ApplyStamp(TerrainHit hit, NSEventModifierMask modifiers)
+    private void ApplyStamp(TerrainHit hit, NSEventModifierMask modifiers, bool forcePreview = false)
     {
         if (!_sculpting || !_strokeEntity.HasValue || hit.Entity != _strokeEntity.Value)
             return;
@@ -410,7 +416,16 @@ public sealed class TerrainSculptOverlay : NSView
             strength,
             _strokeFlattenHeight);
 
-        SavePreview(_strokePreview);
+        // A 129x129 terrain expands to roughly 100k Metal vertices. Avoid rebuilding
+        // that GPU buffer and rewriting JSON for every raw mouse event; preview at a
+        // bounded cadence while retaining every in-memory brush stamp for the final commit.
+        var nowTicks = DateTime.UtcNow.Ticks;
+        if (forcePreview || nowTicks >= _nextPreviewWriteTicks)
+        {
+            SavePreview(_strokePreview);
+            _nextPreviewWriteTicks = nowTicks + PreviewIntervalTicks;
+        }
+
         _lastStampWorld = hit.WorldPosition;
         _lastHit = hit;
         NeedsDisplay = true;
@@ -484,6 +499,7 @@ public sealed class TerrainSculptOverlay : NSView
         _strokeBefore = default;
         _strokePreview = default;
         _lastStampWorld = null;
+        _nextPreviewWriteTicks = 0;
         NeedsDisplay = true;
     }
 
