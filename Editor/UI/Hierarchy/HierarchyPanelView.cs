@@ -184,7 +184,19 @@ public sealed class HierarchyPanelView : NSView
     private void Create(BuiltInMesh mesh, string name) => _commands.Execute(new CreatePrimitiveCommand(_world, _selection, mesh, name));
     private void CreateTerrain() => _commands.Execute(new CreateTerrainCommand(_world, _selection, _assets));
     private void CreateLight(LightType type) => _commands.Execute(new CreateLightCommand(_world, _selection, type));
-    private void Duplicate() { var entity = _selection.ActiveEntity; if (entity.HasValue && _world.Exists(entity.Value)) _commands.Execute(new DuplicateEntityCommand(_world, _selection, entity.Value)); }
+
+    private void Duplicate()
+    {
+        var entity = _selection.ActiveEntity;
+        if (!entity.HasValue || !_world.Exists(entity.Value))
+            return;
+
+        IEditorCommand command = _world.Has<TerrainComponent>(entity.Value)
+            ? new DuplicateTerrainCommand(_world, _selection, _assets, entity.Value)
+            : new DuplicateEntityCommand(_world, _selection, entity.Value);
+        _commands.Execute(command);
+    }
+
     private void Delete() { var entity = _selection.ActiveEntity; if (entity.HasValue && _world.Exists(entity.Value)) _commands.Execute(new DeleteEntityCommand(_world, _selection, entity.Value)); }
     private void Save() => SceneSerializer.Save(_scene, _scenePath);
     private void Load() { SceneSerializer.LoadInto(_scene, _scenePath); _selection.Select(_world.Entities.Count > 0 ? _world.Entities[0] : null); }
