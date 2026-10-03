@@ -13,5 +13,13 @@ public sealed class AssetMeta
     public string Name { get; init; } = "";
     public string ContentHash { get; init; } = "";
 
+    // Optional source/import information. Runtime systems use Guid + ProjectPath;
+    // these fields belong to the editor/import pipeline and can evolve independently.
+    public string SourcePath { get; init; } = "";
+    public string SourceHash { get; init; } = "";
+    public string ImporterId { get; init; } = "";
+    public int ImporterVersion { get; init; }
+    public string ImportSettingsHash { get; init; } = "";
+
     public DateTimeOffset ImportedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }

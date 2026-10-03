@@ -75,6 +75,43 @@ jobs:
         if: steps.source.outputs.present == 'true'
         run: dotnet publish TACTIX.csproj -c Release -f net9.0-macos15.0 -r osx-arm64 --no-restore -p:CreatePackage=false
 
+      - name: Apply TACTIX app icon
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          APP_PATH="$(find bin/Release -type d -name 'TACTIX.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "TACTIX.app was not produced."
+            exit 1
+          fi
+
+          BRANDING="Assets/Branding/TACTIX_EngineLogo.jpg"
+          test -f "$BRANDING"
+
+          ICONSET="artifacts/TACTIX.iconset"
+          rm -rf "$ICONSET"
+          mkdir -p "$ICONSET"
+
+          sips -s format png -z 16 16 "$BRANDING" --out "$ICONSET/icon_16x16.png" >/dev/null
+          sips -s format png -z 32 32 "$BRANDING" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+          sips -s format png -z 32 32 "$BRANDING" --out "$ICONSET/icon_32x32.png" >/dev/null
+          sips -s format png -z 64 64 "$BRANDING" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+          sips -s format png -z 128 128 "$BRANDING" --out "$ICONSET/icon_128x128.png" >/dev/null
+          sips -s format png -z 256 256 "$BRANDING" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+          sips -s format png -z 256 256 "$BRANDING" --out "$ICONSET/icon_256x256.png" >/dev/null
+          sips -s format png -z 512 512 "$BRANDING" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+          sips -s format png -z 512 512 "$BRANDING" --out "$ICONSET/icon_512x512.png" >/dev/null
+          sips -s format png -z 1024 1024 "$BRANDING" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+
+          iconutil -c icns "$ICONSET" -o artifacts/TACTIX.icns
+          cp artifacts/TACTIX.icns "$APP_PATH/Contents/Resources/TACTIX.icns"
+
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIconFile" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string TACTIX.icns" "$APP_PATH/Contents/Info.plist"
+
+          test -f "$APP_PATH/Contents/Resources/TACTIX.icns"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$APP_PATH/Contents/Info.plist")" == "TACTIX.icns" ]]
+
       - name: Verify and ad-hoc sign app bundle
         if: steps.source.outputs.present == 'true'
         shell: bash
@@ -89,6 +126,7 @@ jobs:
           test -f "$APP_PATH/Contents/Resources/Shaders/Triangle.metal"
           test -f "$APP_PATH/Contents/Resources/Shaders/default.metallib"
           test -f "$APP_PATH/Contents/Resources/Assets/Branding/TACTIX_EngineLogo.jpg"
+          test -f "$APP_PATH/Contents/Resources/TACTIX.icns"
 
           file "$APP_PATH/Contents/MacOS/TACTIX"
           xcrun codesign --force --deep --sign - "$APP_PATH"

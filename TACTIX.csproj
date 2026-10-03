@@ -30,5 +30,6 @@
     <BundleResource Include="Shaders/Triangle.metal" />
     <BundleResource Include="Shaders/default.metallib" Condition="Exists('Shaders/default.metallib')" />
     <BundleResource Include="Assets/Branding/TACTIX_EngineLogo.jpg" />
+    <BundleResource Include="Tools/Blender/exporttotactix.py" />
   </ItemGroup>
 </Project>
