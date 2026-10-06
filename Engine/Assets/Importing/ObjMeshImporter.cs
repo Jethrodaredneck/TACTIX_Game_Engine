@@ -1,20 +1,22 @@
 using System.Globalization;
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Formats;
 
 namespace TACTIX.Engine.Assets.Importing;
 
 /// <summary>
-/// Dependency-free OBJ importer used by the static-mesh bootstrap path. It converts
-/// Wavefront geometry into native TACTIX MeshAssets, imports referenced MTL libraries,
-/// preserves the first usemtl binding as the mesh default, and normalizes triangle
+/// Dependency-free OBJ importer used by the native static-mesh path. It converts
+/// Wavefront geometry into TACTIX MeshAssets, imports referenced MTL libraries/textures,
+/// preserves authored material ranges as generic mesh submeshes, and normalizes triangle
 /// winding against authored normals so imported meshes do not appear inside-out.
 /// </summary>
 public sealed class ObjMeshImporter : IAssetImporter
 {
     public string Id => "tactix.obj.native";
-    public int Version => 2;
+    public int Version => 3;
     public AssetImportCapability Capability => AssetImportCapability.Native;
     public IReadOnlyCollection<string> Extensions { get; } = [".obj"];
 
@@ -25,6 +27,7 @@ public sealed class ObjMeshImporter : IAssetImporter
 
         try
         {
+            var sourcePath = Path.GetFullPath(request.SourcePath);
             var sourcePositions = new List<Vector3>();
             var sourceNormals = new List<Vector3>();
             var sourceUvs = new List<Vector2>();
@@ -33,9 +36,19 @@ public sealed class ObjMeshImporter : IAssetImporter
             var uvs = new List<float>();
             var indices = new List<uint>();
             var materialLibraries = new List<string>();
-            string? firstMaterialName = null;
+            var materialRanges = new List<ObjMaterialRange>();
+            string? currentMaterialName = null;
+            var currentRangeStart = 0;
 
-            foreach (var raw in File.ReadLines(request.SourcePath))
+            void CloseMaterialRange()
+            {
+                var count = indices.Count - currentRangeStart;
+                if (count > 0)
+                    materialRanges.Add(new ObjMaterialRange(currentRangeStart, count, currentMaterialName));
+                currentRangeStart = indices.Count;
+            }
+
+            foreach (var raw in File.ReadLines(sourcePath))
             {
                 var line = raw.Trim();
                 if (line.Length == 0 || line[0] == '#') continue;
@@ -47,21 +60,29 @@ public sealed class ObjMeshImporter : IAssetImporter
                     case "v" when parts.Length >= 4:
                         sourcePositions.Add(new Vector3(F(parts[1]), F(parts[2]), F(parts[3])));
                         break;
+
                     case "vn" when parts.Length >= 4:
                     {
                         var n = new Vector3(F(parts[1]), F(parts[2]), F(parts[3]));
                         sourceNormals.Add(n.LengthSquared() > 1e-12f ? Vector3.Normalize(n) : Vector3.UnitY);
                         break;
                     }
+
                     case "vt" when parts.Length >= 3:
                         sourceUvs.Add(new Vector2(F(parts[1]), 1f - F(parts[2])));
                         break;
+
                     case "mtllib" when parts.Length >= 2:
-                        materialLibraries.Add(string.Join(" ", parts.Skip(1)));
+                        materialLibraries.Add(string.Join(" ", parts.Skip(1)).Trim().Trim('"'));
                         break;
-                    case "usemtl" when parts.Length >= 2 && string.IsNullOrWhiteSpace(firstMaterialName):
-                        firstMaterialName = string.Join(" ", parts.Skip(1));
+
+                    case "usemtl" when parts.Length >= 2:
+                    {
+                        CloseMaterialRange();
+                        currentMaterialName = string.Join(" ", parts.Skip(1)).Trim();
                         break;
+                    }
+
                     case "f" when parts.Length >= 4:
                     {
                         var face = parts.Skip(1).Select(ParseVertex).ToArray();
@@ -72,25 +93,48 @@ public sealed class ObjMeshImporter : IAssetImporter
                 }
             }
 
+            CloseMaterialRange();
+
             if (indices.Count == 0)
                 return new(false, Id, Array.Empty<ImportedAsset>(), "OBJ contains no renderable faces.");
 
             var imported = new List<ImportedAsset>();
-            var materialGuid = ImportReferencedMaterials(database, request.SourcePath, materialLibraries, firstMaterialName, imported);
+            var materialImport = ImportReferencedMaterials(database, sourcePath, materialLibraries, imported);
+            var submeshes = materialRanges
+                .Select((range, slot) => new MeshSubmesh(
+                    range.FirstIndex,
+                    range.IndexCount,
+                    ResolveMaterialGuid(range.MaterialName, materialImport),
+                    string.IsNullOrWhiteSpace(range.MaterialName) ? $"Slot {slot}" : range.MaterialName!))
+                .ToArray();
 
-            var mesh = new MeshAsset(AssetGuid.New(), positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray())
+            var name = SafeName(Path.GetFileNameWithoutExtension(sourcePath));
+            var projectPath = ResolveAssetProjectPath(request, name);
+            database.Registry.TryGetByPath(projectPath, out var existing);
+            var guid = existing?.Guid ?? AssetGuid.New();
+
+            var mesh = new MeshAsset(guid, positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray())
             {
-                DefaultMaterialGuid = materialGuid
+                DefaultMaterialGuid = materialImport.Fallback,
+                Submeshes = submeshes
             };
-            var name = SafeName(Path.GetFileNameWithoutExtension(request.SourcePath));
-            var destination = NormalizeDestination(request.DestinationDirectory);
-            var projectPath = $"{destination}/{name}.tasset";
-            var meta = database.SaveMesh(projectPath, mesh, name);
+
+            var sourceHash = FileHash(sourcePath);
+            var meta = database.SaveMesh(
+                projectPath,
+                mesh,
+                name,
+                sourcePath,
+                sourceHash,
+                Id,
+                Version,
+                ComputeSettingsHash(request.Settings));
+
             imported.Add(new ImportedAsset(meta.Guid, meta.Type, meta.ProjectPath, meta.Name));
 
-            var materialText = materialGuid.HasValue ? " with MTL material" : "";
+            var materialCount = submeshes.Select(s => s.DefaultMaterialGuid).Where(g => g.HasValue).Distinct().Count();
             return new(true, Id, imported,
-                $"Imported OBJ mesh ({indices.Count / 3} triangles){materialText} -> {meta.ProjectPath}");
+                $"Imported OBJ mesh ({indices.Count / 3} triangles, {submeshes.Length} material slot{(submeshes.Length == 1 ? "" : "s")}, {materialCount} resolved material{(materialCount == 1 ? "" : "s")}) -> {meta.ProjectPath}");
         }
         catch (Exception ex)
         {
@@ -98,19 +142,23 @@ public sealed class ObjMeshImporter : IAssetImporter
         }
     }
 
-    private static AssetGuid? ImportReferencedMaterials(
+    private sealed record MaterialImportMap(AssetGuid? Fallback, Dictionary<string, AssetGuid> ByName);
+    private readonly record struct ObjMaterialRange(int FirstIndex, int IndexCount, string? MaterialName);
+    private readonly record struct ObjVertex(int Position, int TexCoord, int Normal);
+
+    private static MaterialImportMap ImportReferencedMaterials(
         AssetDatabase database,
         string objPath,
         IReadOnlyList<string> libraries,
-        string? firstMaterialName,
         List<ImportedAsset> imported)
     {
-        if (libraries.Count == 0) return null;
+        var byName = new Dictionary<string, AssetGuid>(StringComparer.OrdinalIgnoreCase);
+        if (libraries.Count == 0)
+            return new MaterialImportMap(null, byName);
 
         var objDirectory = Path.GetDirectoryName(Path.GetFullPath(objPath)) ?? Directory.GetCurrentDirectory();
         var mtlImporter = new MtlMaterialImporter();
         AssetGuid? fallback = null;
-        var desired = string.IsNullOrWhiteSpace(firstMaterialName) ? "" : SafeName(firstMaterialName);
 
         foreach (var library in libraries.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -122,18 +170,31 @@ public sealed class ObjMeshImporter : IAssetImporter
 
             foreach (var asset in result.Assets)
             {
+                if (!imported.Any(x => x.Guid == asset.Guid))
+                    imported.Add(asset);
+
                 if (asset.Type != AssetType.Material) continue;
-                if (!fallback.HasValue) fallback = asset.Guid;
-                if (!imported.Any(x => x.Guid == asset.Guid)) imported.Add(asset);
-                if (!string.IsNullOrWhiteSpace(desired) && string.Equals(asset.Name, desired, StringComparison.OrdinalIgnoreCase))
-                    fallback = asset.Guid;
+
+                fallback ??= asset.Guid;
+                byName[asset.Name] = asset.Guid;
+                byName[SafeName(asset.Name)] = asset.Guid;
             }
         }
 
-        return fallback;
+        return new MaterialImportMap(fallback, byName);
     }
 
-    private readonly record struct ObjVertex(int Position, int TexCoord, int Normal);
+    private static AssetGuid? ResolveMaterialGuid(string? materialName, MaterialImportMap materials)
+    {
+        if (string.IsNullOrWhiteSpace(materialName))
+            return materials.Fallback;
+
+        if (materials.ByName.TryGetValue(materialName, out var exact))
+            return exact;
+
+        var safeName = SafeName(materialName);
+        return materials.ByName.TryGetValue(safeName, out var safe) ? safe : materials.Fallback;
+    }
 
     private static ObjVertex ParseVertex(string token)
     {
@@ -184,6 +245,7 @@ public sealed class ObjMeshImporter : IAssetImporter
             .Where(i => (uint)i < (uint)sourceNormals.Count)
             .Select(i => sourceNormals[i])
             .ToArray();
+
         if (values.Length == 0) return null;
         var sum = values.Aggregate(Vector3.Zero, (current, n) => current + n);
         return sum.LengthSquared() > 1e-12f ? Vector3.Normalize(sum) : null;
@@ -192,7 +254,8 @@ public sealed class ObjMeshImporter : IAssetImporter
     private static Vector3 Position(ObjVertex vertex, List<Vector3> positions)
     {
         var index = ResolveIndex(vertex.Position, positions.Count);
-        if ((uint)index >= (uint)positions.Count) throw new InvalidDataException("OBJ face references an invalid position index.");
+        if ((uint)index >= (uint)positions.Count)
+            throw new InvalidDataException("OBJ face references an invalid position index.");
         return positions[index];
     }
 
@@ -212,15 +275,74 @@ public sealed class ObjMeshImporter : IAssetImporter
         indices.Add((uint)indices.Count);
     }
 
+    private static string ResolveAssetProjectPath(AssetImportRequest request, string assetName)
+    {
+        if (TryGetSetting(request.Settings, "assetProjectPath", out var requestedProjectPath))
+        {
+            var projectPath = AssetDatabase.NormalizeProjectPath(requestedProjectPath);
+            if (!projectPath.EndsWith(".tasset", StringComparison.OrdinalIgnoreCase))
+                projectPath += ".tasset";
+            EnsureAssetsPath(projectPath);
+            return projectPath;
+        }
+
+        return $"{NormalizeDestination(request.DestinationDirectory)}/{assetName}.tasset";
+    }
+
+    private static bool TryGetSetting(IReadOnlyDictionary<string, string>? settings, string key, out string value)
+    {
+        value = "";
+        if (settings == null) return false;
+
+        foreach (var pair in settings)
+        {
+            if (!string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
+            value = pair.Value;
+            return !string.IsNullOrWhiteSpace(value);
+        }
+
+        return false;
+    }
+
+    private static string ComputeSettingsHash(IReadOnlyDictionary<string, string>? settings)
+    {
+        if (settings == null || settings.Count == 0)
+            return "";
+
+        var text = string.Join("\n", settings
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => $"{pair.Key}={pair.Value}"));
+
+        using var sha = SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+    }
+
+    private static string FileHash(string path)
+    {
+        using var sha = SHA256.Create();
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+    }
+
     private static float F(string value) => float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
 
     private static string NormalizeDestination(string destination)
     {
         if (string.IsNullOrWhiteSpace(destination)) return "Assets/Meshes";
         var normalized = AssetDatabase.NormalizeProjectPath(destination).TrimEnd('/');
-        if (!normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase) && !normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+        if (!normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
             normalized = "Assets/" + normalized;
+        EnsureAssetsPath(normalized);
         return normalized;
+    }
+
+    private static void EnsureAssetsPath(string projectPath)
+    {
+        var normalized = AssetDatabase.NormalizeProjectPath(projectPath);
+        if (!normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Imported assets must be written under Assets/: {projectPath}");
     }
 
     private static string SafeName(string value)
