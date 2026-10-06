@@ -45,7 +45,15 @@ public sealed class AssetDatabase
         }
     }
 
-    public AssetMeta SaveMesh(string projectPath, MeshAsset mesh, string name = "")
+    public AssetMeta SaveMesh(
+        string projectPath,
+        MeshAsset mesh,
+        string name = "",
+        string sourcePath = "",
+        string sourceHash = "",
+        string importerId = "",
+        int importerVersion = 0,
+        string importSettingsHash = "")
     {
         var full = ResolveProjectPath(projectPath);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
@@ -60,6 +68,11 @@ public sealed class AssetDatabase
             ProjectPath = NormalizeProjectPath(projectPath),
             Name = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(projectPath) : name,
             ContentHash = ComputeHash(mesh),
+            SourcePath = sourcePath,
+            SourceHash = sourceHash,
+            ImporterId = importerId,
+            ImporterVersion = importerVersion,
+            ImportSettingsHash = importSettingsHash,
             ImportedAtUtc = DateTimeOffset.UtcNow
         };
 
@@ -243,6 +256,16 @@ public sealed class AssetDatabase
         {
             AddBytes(BitConverter.GetBytes(mesh.Indices.Length));
             foreach (var v in mesh.Indices) AddBytes(BitConverter.GetBytes(v));
+        }
+
+        AddBytes(Encoding.UTF8.GetBytes(mesh.DefaultMaterialGuid?.ToString() ?? ""));
+        AddBytes(BitConverter.GetBytes(mesh.Submeshes.Length));
+        foreach (var submesh in mesh.Submeshes)
+        {
+            AddBytes(BitConverter.GetBytes(submesh.FirstIndex));
+            AddBytes(BitConverter.GetBytes(submesh.IndexCount));
+            AddBytes(Encoding.UTF8.GetBytes(submesh.DefaultMaterialGuid?.ToString() ?? ""));
+            AddBytes(Encoding.UTF8.GetBytes(submesh.Name ?? ""));
         }
 
         sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
