@@ -317,7 +317,7 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
 
         var blender = FindBlenderExecutable();
         if (blender is null)
-            return new(false, Id, "", "Blender is required for native .blend import. Install Blender or set TACTIX_BLENDER_PATH.");
+            return new(false, Id, "", "Blender is required to convert .blend sources. TACTIX searched standard macOS application locations and PATH; TACTIX_BLENDER_PATH can be used as an optional override.");
 
         Directory.CreateDirectory(request.OutputDirectory);
         var output = Path.Combine(request.OutputDirectory, Path.GetFileNameWithoutExtension(request.SourcePath) + ".glb");
@@ -471,6 +471,8 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
         {
             string.IsNullOrWhiteSpace(projectRoot) ? "" : Path.Combine(projectRoot, "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(AppContext.BaseDirectory, "..", "Resources", "Tools", "Blender", "exporttotactix.py"),
+            Path.Combine(AppContext.BaseDirectory, "..", "Resources", "exporttotactix.py"),
+            Path.Combine(AppContext.BaseDirectory, "Resources", "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(AppContext.BaseDirectory, "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(Directory.GetCurrentDirectory(), "Tools", "Blender", "exporttotactix.py")
         };
