@@ -341,6 +341,8 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
         psi.ArgumentList.Add("--output");
         psi.ArgumentList.Add(output);
         psi.ArgumentList.Add("--all");
+        psi.ArgumentList.Add("--source");
+        psi.ArgumentList.Add(request.SourcePath);
 
         using var process = Process.Start(psi);
         if (process is null)
@@ -352,11 +354,25 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
 
         if (process.ExitCode != 0 || !File.Exists(output))
         {
-            var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-            return new(false, Id, "", $"Blender conversion failed (exit {process.ExitCode}): {message.Trim()}");
+            var message = BuildProcessFailureMessage(stdout, stderr);
+            return new(false, Id, "", $"Blender conversion failed (exit {process.ExitCode}): {message}");
         }
 
-        return new(true, Id, output, "Converted .blend to GLB for the TACTIX GLTF importer.");
+        var sidecar = Path.ChangeExtension(output, ".tactiximport.json");
+        if (!File.Exists(sidecar))
+            return new(false, Id, "", "Blender produced interchange geometry but did not produce the required TACTIX import metadata sidecar.");
+
+        return new(true, Id, output, "Converted Blender source to normalized GLB interchange for the TACTIX asset pipeline.");
+    }
+
+    private static string BuildProcessFailureMessage(string stdout, string stderr)
+    {
+        var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        detail = detail.Trim();
+        const int maxLength = 4000;
+        if (detail.Length > maxLength)
+            detail = detail[^maxLength..];
+        return string.IsNullOrWhiteSpace(detail) ? "Blender did not report an error." : detail;
     }
 
     private static string? FindBlenderExecutable()
