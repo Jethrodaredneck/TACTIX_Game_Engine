@@ -305,7 +305,7 @@ public sealed class GlbModelImporter : IAssetImporter
 public sealed class BlenderSourceConverter : ISourceAssetConverter
 {
     public string Id => "tactix.blender";
-    public int Version => 2;
+    public int Version => 3;
     public AssetImportCapability Capability => AssetImportCapability.ExternalTool;
     public IReadOnlyCollection<string> Extensions { get; } = [".blend"];
     public string OutputExtension => ".glb";
@@ -317,7 +317,7 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
 
         var blender = FindBlenderExecutable();
         if (blender is null)
-            return new(false, Id, "", "Blender is required for native .blend import. Install Blender or set TACTIX_BLENDER_PATH.");
+            return new(false, Id, "", "Blender is required to convert .blend sources. TACTIX searched standard macOS application locations and PATH; TACTIX_BLENDER_PATH can be used as an optional override.");
 
         Directory.CreateDirectory(request.OutputDirectory);
         var output = Path.Combine(request.OutputDirectory, Path.GetFileNameWithoutExtension(request.SourcePath) + ".glb");
@@ -341,6 +341,8 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
         psi.ArgumentList.Add("--output");
         psi.ArgumentList.Add(output);
         psi.ArgumentList.Add("--all");
+        psi.ArgumentList.Add("--source");
+        psi.ArgumentList.Add(request.SourcePath);
 
         using var process = Process.Start(psi);
         if (process is null)
@@ -352,27 +354,130 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
 
         if (process.ExitCode != 0 || !File.Exists(output))
         {
-            var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-            return new(false, Id, "", $"Blender conversion failed (exit {process.ExitCode}): {message.Trim()}");
+            var message = BuildProcessFailureMessage(stdout, stderr);
+            return new(false, Id, "", $"Blender conversion failed (exit {process.ExitCode}): {message}");
         }
 
-        return new(true, Id, output, "Converted .blend to GLB for the TACTIX GLTF importer.");
+        var sidecar = Path.ChangeExtension(output, ".tactiximport.json");
+        if (!File.Exists(sidecar))
+            return new(false, Id, "", "Blender produced interchange geometry but did not produce the required TACTIX import metadata sidecar.");
+
+        return new(true, Id, output, "Converted Blender source to normalized GLB interchange for the TACTIX asset pipeline.");
+    }
+
+    private static string BuildProcessFailureMessage(string stdout, string stderr)
+    {
+        var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        detail = detail.Trim();
+        const int maxLength = 4000;
+        if (detail.Length > maxLength)
+            detail = detail[^maxLength..];
+        return string.IsNullOrWhiteSpace(detail) ? "Blender did not report an error." : detail;
     }
 
     private static string? FindBlenderExecutable()
     {
         var configured = Environment.GetEnvironmentVariable("TACTIX_BLENDER_PATH");
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
-            return configured;
+        var configuredExecutable = ResolveBlenderCandidate(configured);
+        if (configuredExecutable is not null)
+            return configuredExecutable;
 
-        string[] candidates =
-        [
-            "/Applications/Blender.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.5.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.4.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.3.app/Contents/MacOS/Blender"
-        ];
-        return candidates.FirstOrDefault(File.Exists);
+        var candidates = new List<string>
+        {
+            "/Applications/Blender.app",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Applications", "Blender.app")
+        };
+
+        foreach (var applicationsRoot in new[]
+        {
+            "/Applications",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Applications")
+        })
+        {
+            if (!Directory.Exists(applicationsRoot))
+                continue;
+
+            try
+            {
+                candidates.AddRange(Directory.EnumerateDirectories(applicationsRoot, "Blender*.app", SearchOption.TopDirectoryOnly));
+            }
+            catch
+            {
+                // A non-readable Applications directory should not prevent fallback discovery.
+            }
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var executable = ResolveBlenderCandidate(candidate);
+            if (executable is not null)
+                return executable;
+        }
+
+        return FindOnPath("blender");
+    }
+
+    private static string? ResolveBlenderCandidate(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        candidate = Environment.ExpandEnvironmentVariables(candidate.Trim().Trim('"'));
+        if (File.Exists(candidate))
+            return Path.GetFullPath(candidate);
+
+        if (!Directory.Exists(candidate))
+            return null;
+
+        if (candidate.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        {
+            var macOs = Path.Combine(candidate, "Contents", "MacOS");
+            if (!Directory.Exists(macOs))
+                return null;
+
+            var conventional = Path.Combine(macOs, "Blender");
+            if (File.Exists(conventional))
+                return conventional;
+
+            try
+            {
+                return Directory.EnumerateFiles(macOs)
+                    .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "blender", StringComparison.OrdinalIgnoreCase))
+                    ?? Directory.EnumerateFiles(macOs).FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        var nestedApp = Directory.EnumerateDirectories(candidate, "Blender*.app", SearchOption.TopDirectoryOnly)
+            .Select(ResolveBlenderCandidate)
+            .FirstOrDefault(path => path is not null);
+        return nestedApp;
+    }
+
+    private static string? FindOnPath(string executable)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(directory, executable);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            catch
+            {
+                // Ignore malformed PATH entries and continue discovery.
+            }
+        }
+
+        return null;
     }
 
     private static string? ResolveBridgeScript()
@@ -382,6 +487,8 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
         {
             string.IsNullOrWhiteSpace(projectRoot) ? "" : Path.Combine(projectRoot, "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(AppContext.BaseDirectory, "..", "Resources", "Tools", "Blender", "exporttotactix.py"),
+            Path.Combine(AppContext.BaseDirectory, "..", "Resources", "exporttotactix.py"),
+            Path.Combine(AppContext.BaseDirectory, "Resources", "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(AppContext.BaseDirectory, "Tools", "Blender", "exporttotactix.py"),
             Path.Combine(Directory.GetCurrentDirectory(), "Tools", "Blender", "exporttotactix.py")
         };
