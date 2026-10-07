@@ -1,7 +1,7 @@
 bl_info = {
     "name": "TACTIX Asset Bridge",
     "author": "TACTIX",
-    "version": (2, 0, 0),
+    "version": (3, 0, 0),
     "blender": (3, 6, 0),
     "location": "File > Export > TACTIX Asset Bridge (.glb)",
     "description": "Exports Blender content as GLB plus TACTIX metadata for the universal asset pipeline",
@@ -64,6 +64,8 @@ def export_tactix_glb(output_path, selected_only=True, source_asset_path=None):
     if selected_only and not objects:
         raise RuntimeError("No Blender objects are selected for TACTIX export.")
 
+    # Blender 4.x/5.x keep the glTF exporter as the stable bridge into TACTIX's
+    # format-independent normalization pipeline. Source formats never reach Metal directly.
     bpy.ops.export_scene.gltf(
         filepath=output_path,
         export_format='GLB',
@@ -86,7 +88,10 @@ def export_tactix_glb(output_path, selected_only=True, source_asset_path=None):
 
     metadata = {
         "schema": "tactix.blender.bridge",
-        "version": 2,
+        "version": 3,
+        "converter": "tactix.blender",
+        "interchangeFormat": "GLB",
+        "sourceExtension": os.path.splitext(source_blend or source_asset)[1].lower(),
         "sourceBlend": source_blend,
         "sourceAsset": source_asset,
         "authoritativeSource": source_blend or source_asset,
