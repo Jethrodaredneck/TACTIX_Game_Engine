@@ -299,7 +299,7 @@ public sealed class MetalRenderer : IDisposable
             enc.SetFragmentTexture(_logoTexture,0);
             foreach(var(entity,terrain)in _world.Query<TerrainComponent>())
             {
-                if(!_world.Has<TransformComponent>(entity))continue;var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);if(gpu==null)continue;var t=_world.Get<TransformComponent>(entity);var surface=new SurfaceData(new Vector4(.48f,.52f,.43f,1f),null);DrawMesh(enc,gpu.Buffer,0,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);
+                if(!_world.Has<TransformComponent>(entity))continue;var gpu=GetTerrainGpu(terrain.TerrainAssetGuid);if(gpu==null)continue;var t=_world.Get<TransformComponent>(entity);var surface=new SurfaceData(new Vector4(.48f,.52f,.43f,1f),null);enc.SetCullMode(MTLCullMode.None);DrawMesh(enc,gpu.Buffer,0,gpu.VertexCount,MakeUniforms(t,_selectedEntityId==entity.Id,aspect,dir,local,surface),frameUniformBuffers);enc.SetCullMode(MTLCullMode.Back);
             }
         }
         enc.EndEncoding();cmd.PresentDrawable(drawable);cmd.AddCompletedHandler(_=>{foreach(var buffer in frameUniformBuffers)buffer.Dispose();});cmd.Commit();

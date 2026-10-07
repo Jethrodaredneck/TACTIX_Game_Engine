@@ -70,12 +70,14 @@ public static class TerrainMeshGenerator
                 var c = a + (uint)resolution;
                 var d = c + 1;
 
+                // Metal uses back-face culling with counter-clockwise front faces.
+                // Emit the terrain top surface as front-facing in the editor viewport.
                 indices[index++] = a;
-                indices[index++] = d;
                 indices[index++] = b;
-                indices[index++] = a;
-                indices[index++] = c;
                 indices[index++] = d;
+                indices[index++] = a;
+                indices[index++] = d;
+                indices[index++] = c;
             }
         }
 
