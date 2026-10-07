@@ -305,7 +305,7 @@ public sealed class GlbModelImporter : IAssetImporter
 public sealed class BlenderSourceConverter : ISourceAssetConverter
 {
     public string Id => "tactix.blender";
-    public int Version => 2;
+    public int Version => 3;
     public AssetImportCapability Capability => AssetImportCapability.ExternalTool;
     public IReadOnlyCollection<string> Extensions { get; } = [".blend"];
     public string OutputExtension => ".glb";
@@ -362,17 +362,106 @@ public sealed class BlenderSourceConverter : ISourceAssetConverter
     private static string? FindBlenderExecutable()
     {
         var configured = Environment.GetEnvironmentVariable("TACTIX_BLENDER_PATH");
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
-            return configured;
+        var configuredExecutable = ResolveBlenderCandidate(configured);
+        if (configuredExecutable is not null)
+            return configuredExecutable;
 
-        string[] candidates =
-        [
-            "/Applications/Blender.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.5.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.4.app/Contents/MacOS/Blender",
-            "/Applications/Blender 4.3.app/Contents/MacOS/Blender"
-        ];
-        return candidates.FirstOrDefault(File.Exists);
+        var candidates = new List<string>
+        {
+            "/Applications/Blender.app",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Applications", "Blender.app")
+        };
+
+        foreach (var applicationsRoot in new[]
+        {
+            "/Applications",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Applications")
+        })
+        {
+            if (!Directory.Exists(applicationsRoot))
+                continue;
+
+            try
+            {
+                candidates.AddRange(Directory.EnumerateDirectories(applicationsRoot, "Blender*.app", SearchOption.TopDirectoryOnly));
+            }
+            catch
+            {
+                // A non-readable Applications directory should not prevent fallback discovery.
+            }
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var executable = ResolveBlenderCandidate(candidate);
+            if (executable is not null)
+                return executable;
+        }
+
+        return FindOnPath("blender");
+    }
+
+    private static string? ResolveBlenderCandidate(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        candidate = Environment.ExpandEnvironmentVariables(candidate.Trim().Trim('"'));
+        if (File.Exists(candidate))
+            return Path.GetFullPath(candidate);
+
+        if (!Directory.Exists(candidate))
+            return null;
+
+        if (candidate.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        {
+            var macOs = Path.Combine(candidate, "Contents", "MacOS");
+            if (!Directory.Exists(macOs))
+                return null;
+
+            var conventional = Path.Combine(macOs, "Blender");
+            if (File.Exists(conventional))
+                return conventional;
+
+            try
+            {
+                return Directory.EnumerateFiles(macOs)
+                    .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "blender", StringComparison.OrdinalIgnoreCase))
+                    ?? Directory.EnumerateFiles(macOs).FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        var nestedApp = Directory.EnumerateDirectories(candidate, "Blender*.app", SearchOption.TopDirectoryOnly)
+            .Select(ResolveBlenderCandidate)
+            .FirstOrDefault(path => path is not null);
+        return nestedApp;
+    }
+
+    private static string? FindOnPath(string executable)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(directory, executable);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            catch
+            {
+                // Ignore malformed PATH entries and continue discovery.
+            }
+        }
+
+        return null;
     }
 
     private static string? ResolveBridgeScript()
