@@ -127,6 +127,7 @@ jobs:
           test -f "$APP_PATH/Contents/Resources/Shaders/Triangle.metal"
           test -f "$APP_PATH/Contents/Resources/Shaders/default.metallib"
           test -f "$APP_PATH/Contents/Resources/Assets/Branding/TACTIX_EngineLogo.jpg"
+          test -f "$APP_PATH/Contents/Resources/Tools/Blender/exporttotactix.py"
           test -f "$APP_PATH/Contents/Resources/TACTIX.icns"
 
           file "$APP_PATH/Contents/MacOS/TACTIX"
