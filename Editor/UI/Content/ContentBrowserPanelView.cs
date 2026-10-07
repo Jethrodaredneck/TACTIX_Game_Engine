@@ -330,7 +330,7 @@ public sealed class ContentBrowserPanelView : NSView
         {
             var assetFile = JsonAssetSerializer.Load(file);
             if (string.IsNullOrWhiteSpace(assetFile.Meta.SourcePath)) return null;
-            if (assetFile.Meta.Type is not (AssetType.Model or AssetType.Texture)) return null;
+            if (assetFile.Meta.Type is not (AssetType.Model or AssetType.Mesh or AssetType.Texture)) return null;
             return () => ReimportAsset(file);
         }
         catch { return null; }

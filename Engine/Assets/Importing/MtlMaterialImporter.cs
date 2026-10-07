@@ -81,7 +81,7 @@ public sealed class MtlMaterialImporter : IAssetImporter
             switch (parts[0])
             {
                 case "newmtl" when parts.Length >= 2:
-                    current = new ParsedMaterial { Name = string.Join("_", parts.Skip(1)) };
+                    current = new ParsedMaterial { Name = string.Join(" ", parts.Skip(1)) };
                     result.Add(current);
                     break;
                 case "Kd" when current != null && parts.Length >= 4:
