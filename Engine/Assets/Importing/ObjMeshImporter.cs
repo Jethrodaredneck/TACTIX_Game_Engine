@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TACTIX.Engine.Assets.Database;
 using TACTIX.Engine.Assets.Formats;
+using TACTIX.Engine.Assets.Optimization;
 
 namespace TACTIX.Engine.Assets.Importing;
 
@@ -118,6 +119,14 @@ public sealed class ObjMeshImporter : IAssetImporter
                 DefaultMaterialGuid = materialImport.Fallback,
                 Submeshes = submeshes
             };
+
+            // Explicit opt-in: existing imports remain byte-for-byte unchanged by default.
+            if (TryGetSetting(request.Settings, "meshOptimization", out var optimizationMode) &&
+                string.Equals(optimizationMode, "vertexCache", StringComparison.OrdinalIgnoreCase) &&
+                MeshOptimization.TryOptimizeVertexCache(mesh, out var optimizedMesh))
+            {
+                mesh = optimizedMesh;
+            }
 
             var sourceHash = FileHash(sourcePath);
             var meta = database.SaveMesh(

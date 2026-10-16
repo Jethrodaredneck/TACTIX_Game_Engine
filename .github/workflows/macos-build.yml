@@ -3,7 +3,7 @@ name: macOS / Metal Build
 # CI trigger refresh for authoritative TACTIX 0.3 baseline.
 on:
   push:
-    branches: [main]
+    branches: [main, integration/brutal-meshoptimizer]
   pull_request:
   workflow_dispatch:
 
@@ -68,6 +68,22 @@ jobs:
           xcrun -sdk macosx metal -c Shaders/Triangle.metal -o artifacts/metal/Triangle.air
           xcrun -sdk macosx metallib artifacts/metal/Triangle.air -o artifacts/metal/default.metallib
 
+      - name: Build meshoptimizer for Apple Silicon
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v0.25 https://github.com/zeux/meshoptimizer.git artifacts/meshoptimizer-source
+          mkdir -p artifacts/native
+          xcrun clang++ -std=c++11 -O3 -DNDEBUG -arch arm64 -dynamiclib \
+            -install_name @rpath/libmeshoptimizer.dylib \
+            artifacts/meshoptimizer-source/src/*.cpp \
+            -o artifacts/native/libmeshoptimizer.dylib
+          file artifacts/native/libmeshoptimizer.dylib
+          lipo artifacts/native/libmeshoptimizer.dylib -verify_arch arm64
+          nm -gU artifacts/native/libmeshoptimizer.dylib | grep -q '_meshopt_generateVertexRemap$'
+          nm -gU artifacts/native/libmeshoptimizer.dylib | grep -q '_meshopt_optimizeVertexCache$'
+
       - name: Build TACTIX
         if: steps.source.outputs.present == 'true'
         run: dotnet build TACTIX.csproj -c Debug -f net9.0-macos15.0 -r osx-arm64 --no-restore
@@ -75,6 +91,17 @@ jobs:
       - name: Publish TACTIX.app
         if: steps.source.outputs.present == 'true'
         run: dotnet publish TACTIX.csproj -c Release -f net9.0-macos15.0 -r osx-arm64 --no-restore -p:CreatePackage=false
+
+      - name: Package meshoptimizer native library
+        if: steps.source.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find bin/Release -type d -name 'TACTIX.app' -print -quit)"
+          test -n "$APP_PATH"
+          test -f artifacts/native/libmeshoptimizer.dylib
+          cp artifacts/native/libmeshoptimizer.dylib "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib"
+          lipo "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib" -verify_arch arm64
 
       - name: Apply TACTIX app icon
         if: steps.source.outputs.present == 'true'
@@ -127,8 +154,12 @@ jobs:
           test -f "$APP_PATH/Contents/Resources/Shaders/Triangle.metal"
           test -f "$APP_PATH/Contents/Resources/Shaders/default.metallib"
           test -f "$APP_PATH/Contents/Resources/Assets/Branding/TACTIX_EngineLogo.jpg"
+          test -f "$APP_PATH/Contents/Resources/Tools/Blender/exporttotactix.py"
+          grep -q '"schema": "tactix.blender.bridge"' "$APP_PATH/Contents/Resources/Tools/Blender/exporttotactix.py"
           test -f "$APP_PATH/Contents/Resources/TACTIX.icns"
 
+          test -f "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib"
+          nm -gU "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib" | grep -q '_meshopt_generateVertexRemap$'
           file "$APP_PATH/Contents/MacOS/TACTIX"
           xcrun codesign --force --deep --sign - "$APP_PATH"
           xcrun codesign --verify --deep --strict --verbose=2 "$APP_PATH"
