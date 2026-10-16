@@ -80,7 +80,7 @@ jobs:
             artifacts/meshoptimizer-source/src/*.cpp \
             -o artifacts/native/libmeshoptimizer.dylib
           file artifacts/native/libmeshoptimizer.dylib
-          lipo -verify_arch arm64 artifacts/native/libmeshoptimizer.dylib
+          lipo -verify_arch arm64 -artifacts/native/libmeshoptimizer.dylib
           nm -gU artifacts/native/libmeshoptimizer.dylib | grep -q '_meshopt_generateVertexRemap$'
           nm -gU artifacts/native/libmeshoptimizer.dylib | grep -q '_meshopt_optimizeVertexCache$'
 
@@ -101,7 +101,7 @@ jobs:
           test -n "$APP_PATH"
           test -f artifacts/native/libmeshoptimizer.dylib
           cp artifacts/native/libmeshoptimizer.dylib "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib"
-          lipo -verify_arch arm64 "$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib"
+          lipo -verify_arch arm64 -"$APP_PATH/Contents/MacOS/libmeshoptimizer.dylib"
 
       - name: Apply TACTIX app icon
         if: steps.source.outputs.present == 'true'
